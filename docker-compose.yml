@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: bandera
+      POSTGRES_PASSWORD: bandera
+      POSTGRES_DB: bandera
+    ports:
+      - "5433:5432"
+    volumes:
+      # Z = SELinux relabel; required on Fedora/RHEL hosts, harmless elsewhere.
+      - ./db:/docker-entrypoint-initdb.d:ro,Z
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bandera"]
+      interval: 3s
+      retries: 10
+
+volumes:
+  pgdata:

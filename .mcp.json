@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "bandera": {
+      "command": "node",
+      "args": [
+        "src/mcp/stdio.ts"
+      ],
+      "env": {
+        "SHOP_BASE_URL": "http://localhost:3000"
+      }
+    }
+  }
+}

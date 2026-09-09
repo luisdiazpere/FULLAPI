@@ -1,0 +1,1170 @@
+{
+  "info": {
+    "name": "Bandera y Sello — MCP over HTTP",
+    "description": "Drives the shop's MCP server (Streamable HTTP, stateless) at POST /mcp.\n\nStart both processes first:\n  npm start        # the shop on :3000\n  npm run mcp:http # the MCP server on :3001\n\nThe server is stateless, so every request stands alone — there is no session id to carry and `initialize` is not a prerequisite for `tools/call`. It is included first because a real MCP client always sends it.\n\nResponses are plain JSON (the server sets enableJsonResponse), not SSE frames.\n\nWARNING: the 'Payment' folder spends real stock. See its description.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "mcpUrl",
+      "value": "http://localhost:3001/mcp"
+    },
+    {
+      "key": "shopOrigin",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "sessionId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1 · Handshake",
+      "item": [
+        {
+          "name": "initialize",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"initialize\",\n  \"params\": {\n    \"protocolVersion\": \"2025-06-18\",\n    \"capabilities\": {},\n    \"clientInfo\": {\n      \"name\": \"postman\",\n      \"version\": \"1.0\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "tools/list",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}",
+                  "",
+                  "pm.test(\"all nine tools are advertised\", () => {",
+                  "    pm.expect(body.result.tools).to.have.lengthOf(9);",
+                  "});",
+                  "pm.test(\"create_payment_link is the only tool that writes\", () => {",
+                  "    const writes = body.result.tools.filter(t => t.annotations?.readOnlyHint !== true);",
+                  "    pm.expect(writes.map(t => t.name)).to.eql([\"create_payment_link\"]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/list\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 · Catalogue",
+      "item": [
+        {
+          "name": "resolve_country — Spanish name",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"resolve_country\",\n    \"arguments\": {\n      \"query\": \"Alemania\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            },
+            "description": "The case plain fuzzy matching cannot do: Alemania is not a misspelling of Germany."
+          }
+        },
+        {
+          "name": "resolve_country — ambiguous",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"resolve_country\",\n    \"arguments\": {\n      \"query\": \"Ja\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            },
+            "description": "Returns candidates rather than guessing. found:false is the correct answer here, not a failure."
+          }
+        },
+        {
+          "name": "list_kits",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"list_kits\",\n    \"arguments\": {}\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "list_kits — with templates",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"list_kits\",\n    \"arguments\": {\n      \"verbose\": true\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "list_catalog — Japan",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"list_catalog\",\n    \"arguments\": {\n      \"countryCode\": \"JPN\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "search_catalog — Spanish sentence",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"search_catalog\",\n    \"arguments\": {\n      \"query\": \"algo barato de Japon\",\n      \"maxUnitAmount\": 2000\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            },
+            "description": "Finds the country inside free text and applies the price ceiling."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 · Shipping",
+      "item": [
+        {
+          "name": "list_shipping_destinations",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"list_shipping_destinations\",\n    \"arguments\": {}\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "check_shipping — Japan",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "const text = body.result.content[0].text;",
+                  "// Passes either way: with SHIPPO_API_KEY set this checks the quote, and without",
+                  "// one it checks that the tool says so cleanly instead of inventing a price.",
+                  "if (body.result.isError) {",
+                  "    pm.test(\"no carrier key configured, and the tool says so plainly\", () => {",
+                  "        pm.expect(text).to.include(\"not configured\");",
+                  "    });",
+                  "} else {",
+                  "    const quote = JSON.parse(text);",
+                  "    pm.test(\"quotes a serviceable destination in minor units\", () => {",
+                  "        pm.expect(quote).to.have.property(\"serviceable\");",
+                  "        if (quote.serviceable) {",
+                  "            pm.expect(quote.methods).to.be.an(\"array\").that.is.not.empty;",
+                  "            quote.methods.forEach(m => pm.expect(m.amount).to.be.a(\"number\"));",
+                  "        }",
+                  "    });",
+                  "    pm.test(\"parcel weight is the summed order, not one kit\", () => {",
+                  "        pm.expect(quote.parcel.weightGrams).to.eql(600 * 2 + 300);",
+                  "    });",
+                  "}",
+                  "console.log(text);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"check_shipping\",\n    \"arguments\": {\n      \"countryCode\": \"JPN\",\n      \"items\": [\n        {\n          \"kitSku\": \"flag-and-seal\",\n          \"countryCode\": \"JPN\",\n          \"quantity\": 2\n        },\n        {\n          \"kitSku\": \"capital-postcards\",\n          \"countryCode\": \"FRA\",\n          \"quantity\": 1\n        }\n      ]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            },
+            "description": "Needs SHIPPO_API_KEY. Without it the shop answers 503 and this tool reports that shipping cannot be quoted — which is a correct answer, so it is not an isError."
+          }
+        },
+        {
+          "name": "check_shipping — not served",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"check_shipping\",\n    \"arguments\": {\n      \"countryCode\": \"PRK\",\n      \"items\": [\n        {\n          \"kitSku\": \"flag-and-seal\",\n          \"countryCode\": \"JPN\",\n          \"quantity\": 2\n        },\n        {\n          \"kitSku\": \"capital-postcards\",\n          \"countryCode\": \"FRA\",\n          \"quantity\": 1\n        }\n      ]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            },
+            "description": "serviceable:false with a reason. A 200, deliberately: 'we don't ship there' is an answer."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 · Order checks (holds nothing)",
+      "item": [
+        {
+          "name": "validate_cart — clean",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"validate_cart\",\n    \"arguments\": {\n      \"items\": [\n        {\n          \"kitSku\": \"flag-and-seal\",\n          \"countryCode\": \"JPN\",\n          \"quantity\": 2\n        },\n        {\n          \"kitSku\": \"capital-postcards\",\n          \"countryCode\": \"FRA\",\n          \"quantity\": 1\n        }\n      ]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "validate_cart — over stock across two countries",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"validate_cart\",\n    \"arguments\": {\n      \"items\": [\n        {\n          \"kitSku\": \"currency-coin-frame\",\n          \"countryCode\": \"JPN\",\n          \"quantity\": 8\n        },\n        {\n          \"kitSku\": \"currency-coin-frame\",\n          \"countryCode\": \"FRA\",\n          \"quantity\": 8\n        }\n      ]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            },
+            "description": "Stock is per kit, not per kit-country. 8 + 8 = 16 against a stock of 12."
+          }
+        },
+        {
+          "name": "validate_cart — country a kit cannot be made for",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"validate_cart\",\n    \"arguments\": {\n      \"items\": [\n        {\n          \"kitSku\": \"capital-postcards\",\n          \"countryCode\": \"HMD\",\n          \"quantity\": 1\n        }\n      ]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            },
+            "description": "Heard Island has no capital, so the postcard template cannot render."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 · Payment (SPENDS REAL STOCK)",
+      "description": "create_payment_link creates a live Stripe session and immediately decrements stock that nothing gives back. Do not include this folder in a collection run. Note the stock values before you use it.",
+      "item": [
+        {
+          "name": "create_payment_link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}",
+                  "",
+                  "const created = JSON.parse(body.result.content[0].text);",
+                  "pm.collectionVariables.set(\"sessionId\", created.sessionId);",
+                  "pm.test(\"returned a Stripe URL and a session id\", () => {",
+                  "    pm.expect(created.url).to.include(\"checkout.stripe.com\");",
+                  "    pm.expect(created.sessionId).to.match(/^cs_/);",
+                  "});",
+                  "console.log(\"Open this to pay:\", created.url);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"create_payment_link\",\n    \"arguments\": {\n      \"items\": [\n        {\n          \"kitSku\": \"flag-and-seal\",\n          \"countryCode\": \"JPN\",\n          \"quantity\": 2\n        },\n        {\n          \"kitSku\": \"capital-postcards\",\n          \"countryCode\": \"FRA\",\n          \"quantity\": 1\n        }\n      ]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            },
+            "description": "Saves sessionId to a collection variable for the next request."
+          }
+        },
+        {
+          "name": "check_payment_status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a JSON-RPC result, not an error\", () => {",
+                  "    pm.expect(body).to.have.property(\"jsonrpc\", \"2.0\");",
+                  "    pm.expect(body, JSON.stringify(body.error)).to.not.have.property(\"error\");",
+                  "});",
+                  "const payload = body.result?.content?.[0]?.text;",
+                  "if (payload !== undefined) {",
+                  "    pm.test(\"tool did not report a failure\", () => {",
+                  "        pm.expect(body.result.isError, payload).to.not.eql(true);",
+                  "    });",
+                  "    try { console.log(JSON.parse(payload)); } catch { console.log(payload); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"check_payment_status\",\n    \"arguments\": {\n      \"sessionId\": \"{{sessionId}}\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            },
+            "description": "Poll after opening the URL. Stop once paymentStatus is 'paid'."
+          }
+        },
+        {
+          "name": "create_payment_link — out of stock (expected failure)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"tool reports a failure the model can act on\", () => {",
+                  "    pm.expect(body.result.isError).to.eql(true);",
+                  "    pm.expect(body.result.content[0].text).to.be.a(\"string\").and.not.empty;",
+                  "});",
+                  "console.log(body.result.content[0].text);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"create_payment_link\",\n    \"arguments\": {\n      \"items\": [\n        {\n          \"kitSku\": \"collector-bundle\",\n          \"countryCode\": \"JPN\",\n          \"quantity\": 1\n        }\n      ]\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            },
+            "description": "collector-bundle is seeded at 0. Shows the error text the model receives."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 · Guards",
+      "description": "The endpoint is browser-reachable and can create payment links, so these must hold.",
+      "item": [
+        {
+          "name": "GET /mcp is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"expects 405\", () => pm.response.to.have.status(405));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "unknown path is 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"expects 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"tools/list\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://localhost:3001/nope",
+              "host": [
+                "http://localhost:3001/nope"
+              ]
+            }
+          }
+        },
+        {
+          "name": "disallowed origin is 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"expects 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "origin",
+                "value": "https://evil.test"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"tools/list\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "the shop's own origin is allowed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"expects 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "origin",
+                "value": "{{shopOrigin}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"tools/list\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{mcpUrl}}",
+              "host": [
+                "{{mcpUrl}}"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

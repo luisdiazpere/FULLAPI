@@ -1,0 +1,799 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bandera y Sello</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Bodoni+Moda:opsz,wght@6..96,400;6..96,600;6..96,800&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --paper: #d9dcd3;      /* album page */
+    --stamp: #f7f6f1;      /* stamp paper */
+    --ink: #16233b;        /* postal ink */
+    --blue: #29489c;
+    --red: #c0182f;
+    --olive: #6e7a55;
+    --gum: #c9c5b4;
+    --rule: #16233b26;
+    --serif: 'Bodoni Moda', Didot, 'Bodoni MT', Georgia, serif;
+    --sans: Archivo, ui-sans-serif, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 400 16px/1.55 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+
+  /* ---------- masthead: the postmark cancels the wordmark ---------- */
+
+  .masthead {
+    max-width: 78rem; margin: 0 auto; padding: 3rem 1.5rem 2.25rem;
+    display: flex; align-items: center; gap: 1.75rem; flex-wrap: wrap;
+  }
+  .postmark { flex: none; width: 12.5rem; height: 6.5rem; color: var(--red); }
+  .postmark text { font: 600 8.5px/1 var(--sans); letter-spacing: .13em; fill: currentColor; }
+  .postmark .figure { font: 800 20px/1 var(--serif); letter-spacing: 0; }
+  .wordmark h1 {
+    margin: 0; font: 400 clamp(2.5rem, 7vw, 3.75rem)/.95 var(--serif);
+    letter-spacing: -.015em;
+  }
+  .wordmark p { margin: .5rem 0 0; max-width: 34ch; font-size: .9375rem; color: #16233bb0; }
+
+  /* ---------- sticky utility bar ---------- */
+
+  .bar {
+    position: sticky; top: 0; z-index: 4;
+    background: var(--paper); border-top: 1px solid var(--ink); border-bottom: 1px solid var(--rule);
+  }
+  .bar > div {
+    max-width: 78rem; margin: 0 auto; padding: .625rem 1.5rem;
+    display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+  }
+  .count { margin: 0; font-size: .875rem; color: #16233bb0; font-variant-numeric: tabular-nums; }
+  .filter { margin-left: auto; display: flex; gap: .5rem; }
+
+  input, button, textarea {
+    font: inherit; color: inherit; border-radius: 0;
+    border: 1px solid var(--ink); background: var(--stamp); padding: .5rem .75rem;
+  }
+  input { min-width: 16rem; }
+  input::placeholder, textarea::placeholder { color: #16233b7a; }
+  button { cursor: pointer; font-weight: 500; }
+  button:hover:not(:disabled) { background: var(--ink); color: var(--stamp); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .ghost { padding: .5rem .7rem; }
+  .primary { background: var(--ink); border-color: var(--ink); color: var(--stamp); }
+  .primary:hover:not(:disabled) { background: var(--blue); border-color: var(--blue); }
+
+  main { max-width: 78rem; margin: 0 auto; padding: 1.75rem 1.5rem 6rem; }
+
+  .note {
+    margin-bottom: 1.5rem; padding: .875rem 1.125rem;
+    background: var(--stamp); border: 1px solid var(--rule); border-left: 4px solid var(--red);
+    font-size: .9375rem;
+  }
+  .note:empty { display: none; }
+
+  /* ---------- the grid is an album page of stamps ---------- */
+
+  #grid { display: grid; gap: 1.75rem; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }
+
+  article {
+    --r: 5px;                     /* bite radius */
+    --p: 15px;                    /* perforation pitch; teeth are --p minus 2x--r */
+    --cancel: var(--blue);
+    --perf:
+      conic-gradient(#000 0 0) content-box,
+      radial-gradient(circle var(--r) at 50% 50%, #0000 96%, #000 99%)
+        calc(var(--r) - var(--p) / 2) calc(var(--r) - var(--p) / 2) / var(--p) var(--p);
+    display: flex; flex-direction: column;
+    background: var(--stamp); padding: var(--r);
+    -webkit-mask: var(--perf);
+    mask: var(--perf);
+  }
+  .shot {
+    position: relative; aspect-ratio: 4/3;
+    border: 1px solid var(--rule); background: #16233b0a;
+  }
+  .shot img {
+    position: absolute; inset: 1.25rem; margin: auto; width: auto; height: auto;
+    max-width: calc(100% - 2.5rem); max-height: calc(100% - 2.5rem);
+  }
+  .chip {
+    position: absolute; right: .5rem; bottom: .5rem;
+    display: flex; align-items: center; gap: .25rem;
+    padding: .1875rem .5rem; border: 1.5px solid var(--cancel); border-radius: 999px;
+    color: var(--cancel); background: #f7f6f1d9;
+    font-size: .6875rem; font-weight: 600; letter-spacing: .08em;
+  }
+  .body { padding: .875rem .375rem .25rem; display: flex; flex-direction: column; gap: .3125rem; flex: 1; }
+  .body h3 { margin: 0; font: 400 1.0625rem/1.25 var(--serif); }
+  .body p { margin: 0; font-size: .8125rem; line-height: 1.5; color: #16233ba8; flex: 1; }
+  .foot {
+    display: flex; align-items: baseline; justify-content: space-between; gap: .75rem;
+    margin-top: .75rem; padding-top: .625rem; border-top: 1px solid var(--rule);
+  }
+  .price { font: 600 1.375rem/1 var(--serif); font-variant-numeric: tabular-nums; }
+  .foot button { padding: .375rem .875rem; font-size: .875rem; }
+  .why { font-size: .75rem; color: var(--red); padding-bottom: .25rem; }
+
+  .more { display: grid; place-items: center; margin: 3rem 0 1rem; }
+
+  .panel {
+    grid-column: 1 / -1; padding: 4.5rem 1.5rem; text-align: center;
+    background: var(--stamp); border: 1px solid var(--rule);
+  }
+  .panel .big { font-size: 2.5rem; line-height: 1; }
+  .panel h2 { margin: 1rem 0 .375rem; font: 400 1.5rem/1.2 var(--serif); }
+  .panel p { margin: 0 auto; max-width: 30rem; font-size: .9375rem; color: #16233ba8; }
+  .panel button { margin-top: 1.5rem; }
+
+  /* ---------- receipt ---------- */
+
+  .receipt {
+    grid-column: 1 / -1; max-width: 30rem; margin: 1.5rem auto;
+    background: var(--stamp); border: 1px solid var(--ink);
+  }
+  .receipt .top { padding: 2rem 1.5rem 1.5rem; text-align: center; border-bottom: 1px solid var(--rule); }
+  .receipt .tick {
+    width: 3.25rem; height: 3.25rem; margin: 0 auto 1rem; border: 2px solid var(--olive);
+    border-radius: 50%; color: var(--olive); display: grid; place-items: center; font-size: 1.375rem;
+  }
+  .receipt .tick.pending { border-color: var(--red); color: var(--red); }
+  .receipt h2 { margin: 0; font: 400 1.5rem/1.15 var(--serif); }
+  .receipt .sub { margin: .375rem 0 0; font-size: .875rem; color: #16233ba8; }
+  .receipt .item { display: flex; gap: 1rem; align-items: center; padding: 1.25rem 1.5rem; }
+  .receipt .item + .item { border-top: 1px solid var(--rule); padding-top: 0; margin-top: -.5rem; }
+  .receipt .item img { width: 5rem; aspect-ratio: 3/2; object-fit: contain; flex: none; border: 1px solid var(--rule); }
+  .receipt .item h3 { margin: 0; font: 400 1.0625rem/1.3 var(--serif); }
+  .receipt dl {
+    margin: 0; padding: 0 1.5rem 1.5rem; display: grid; grid-template-columns: auto 1fr;
+    gap: .5rem 1rem; font-size: .875rem;
+  }
+  .receipt dt { color: #16233ba8; }
+  .receipt dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .receipt .actions { padding: 0 1.5rem 1.5rem; display: grid; }
+  .receipt .actions a { text-decoration: none; }
+  .skeleton { opacity: .5; }
+
+  /* ---------- cart ---------- */
+
+  .cart-open { display: flex; align-items: center; gap: .5rem; }
+  .cart-open b { font-variant-numeric: tabular-nums; }
+  .scrim { position: fixed; inset: 0; z-index: 7; background: #16233b59; }
+  .scrim[hidden], .drawer[hidden] { display: none; }
+  .drawer {
+    position: fixed; inset-block: 0; right: 0; z-index: 8;
+    width: min(26rem, 100vw); display: flex; flex-direction: column;
+    background: var(--stamp); border-left: 1px solid var(--ink);
+  }
+  .drawer > header {
+    display: flex; align-items: baseline; gap: .625rem;
+    padding: 1.125rem 1.25rem; border-bottom: 1px solid var(--rule);
+  }
+  .drawer > header h2 { margin: 0; font: 400 1.375rem/1 var(--serif); }
+  .drawer > header button {
+    margin-left: auto; border: 0; background: none; padding: 0 .25rem;
+    font-size: 1.25rem; line-height: 1;
+  }
+  .drawer > header button:hover { background: none; color: var(--red); }
+
+  .lines { flex: 1; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+  .lines li {
+    display: grid; grid-template-columns: 4.5rem 1fr; gap: .875rem;
+    padding: 1rem 1.25rem; border-bottom: 1px solid var(--rule);
+  }
+  .lines img {
+    width: 4.5rem; aspect-ratio: 3/2; object-fit: contain;
+    background: #16233b0a; border: 1px solid var(--rule);
+  }
+  .lines h3 { margin: 0 0 .1875rem; font: 400 .9375rem/1.3 var(--serif); }
+  .meta { font-size: .75rem; color: #16233ba8; }
+  .qty { margin: .625rem 0 .375rem; display: flex; align-items: center; gap: .5rem; }
+  .qty button { padding: .0625rem .5rem; font-size: .9375rem; line-height: 1.4; }
+  .qty > span { min-width: 1.25rem; text-align: center; font-variant-numeric: tabular-nums; }
+  .line-total { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .drop {
+    border: 0; background: none; padding: 0; font-size: .75rem;
+    color: var(--red); text-decoration: underline; font-weight: 400;
+  }
+  .drop:hover { background: none; color: var(--red); }
+
+  .sum { border-top: 1px solid var(--ink); padding: 1.125rem 1.25rem; display: grid; gap: .875rem; }
+  .sum .row { display: flex; justify-content: space-between; align-items: baseline; }
+  .sum .row span:last-child { font: 600 1.375rem/1 var(--serif); font-variant-numeric: tabular-nums; }
+  .sum .oops { margin: 0; font-size: .8125rem; color: var(--red); }
+  .lines li.bare { display: block; padding: 3.5rem 1.5rem; text-align: center; }
+  .bare p { margin: 0 0 1.25rem; font-size: .9375rem; color: #16233ba8; }
+
+  /* ---------- the counter: ask about the catalogue ---------- */
+
+  .counter-tab {
+    position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 5;
+    padding: .75rem 1.25rem; background: var(--ink); color: var(--stamp); border-color: var(--ink);
+    box-shadow: 4px 4px 0 var(--gum);
+  }
+  .counter-tab:hover { background: var(--blue); border-color: var(--blue); color: var(--stamp); }
+
+  .counter[hidden], .counter-tab[hidden] { display: none; }
+  .counter {
+    position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 6;
+    width: min(23rem, calc(100vw - 3rem)); max-height: min(34rem, calc(100vh - 3rem));
+    display: flex; flex-direction: column;
+    background: var(--stamp); border: 1px solid var(--ink); box-shadow: 6px 6px 0 var(--gum);
+  }
+  /* airmail edge — the one place chevrons earn their keep */
+  aside.counter::before {
+    content: ''; display: block; height: 6px; flex: none;
+    background: repeating-linear-gradient(-45deg,
+      var(--blue) 0 8px, var(--stamp) 8px 16px, var(--red) 16px 24px, var(--stamp) 24px 32px);
+  }
+  .counter > header {
+    display: flex; align-items: baseline; gap: .625rem;
+    padding: .875rem 1rem; border-bottom: 1px solid var(--rule);
+  }
+  .counter > header h2 { margin: 0; font: 400 1.125rem/1 var(--serif); }
+  .counter > header span { font-size: .75rem; color: #16233ba8; }
+  .counter > header button { margin-left: auto; border: 0; background: none; padding: 0 .25rem; font-size: 1.125rem; line-height: 1; }
+  .counter > header button:hover { background: none; color: var(--red); }
+
+  .thread { flex: 1; min-height: 7rem; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .875rem; }
+  .msg { max-width: 85%; padding: .625rem .75rem; font-size: .875rem; line-height: 1.5; }
+  .msg.you { align-self: flex-end; background: var(--ink); color: var(--stamp); }
+  .msg.reply { align-self: flex-start; background: #29489c14; border-left: 2px solid var(--blue); }
+  .msg.reply.working { color: #16233b8f; font-style: italic; }
+
+  .openers { display: flex; flex-direction: column; gap: .5rem; align-items: flex-start; }
+  .openers p { margin: 0 0 .25rem; font-size: .875rem; color: #16233ba8; }
+  .openers button {
+    background: none; border: 1px solid var(--rule); padding: .375rem .625rem;
+    font-size: .8125rem; font-weight: 400; text-align: left;
+  }
+
+  .ask { display: flex; gap: .5rem; padding: .75rem 1rem; border-top: 1px solid var(--rule); }
+  .ask textarea { flex: 1; resize: none; min-height: 2.625rem; max-height: 6rem; line-height: 1.4; }
+  .ask button { flex: none; align-self: flex-end; }
+  .wire { margin: 0; padding: 0 1rem .75rem; font-size: .6875rem; color: #16233b8f; }
+
+  @media (max-width: 52rem) {
+    .masthead { padding: 2rem 1.25rem 1.5rem; gap: 1.25rem; }
+    .postmark { width: 9.5rem; height: 5rem; }
+    .bar > div, main { padding-left: 1.25rem; padding-right: 1.25rem; }
+    #grid { gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr)); }
+  }
+  @media (max-width: 34rem) {
+    .masthead { padding: 1.5rem 1rem 1.125rem; gap: 1rem; }
+    .postmark { width: 7.5rem; height: 3.9rem; }
+    .wordmark p { font-size: .875rem; }
+    .bar > div, main { padding-left: 1rem; padding-right: 1rem; }
+    .count { width: 100%; }
+    .filter { margin-left: 0; width: 100%; }
+    .filter input { flex: 1; min-width: 0; }
+    .cart-open { width: 100%; justify-content: center; }
+    #grid { grid-template-columns: 1fr; gap: 1.5rem; }
+    .shot { aspect-ratio: 16/9; }
+    .counter { right: 0; bottom: 0; width: 100vw; max-height: 80dvh; }
+    .counter-tab { right: 1rem; bottom: 1rem; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="masthead">
+  <svg class="postmark" viewBox="0 0 200 104" aria-hidden="true" fill="none" stroke="currentColor">
+    <defs><path id="arc" d="M 16 52 A 36 36 0 0 1 88 52"/></defs>
+    <circle cx="52" cy="52" r="36" stroke-width="2"/>
+    <circle cx="52" cy="52" r="30" stroke-width="1"/>
+    <text><textPath href="#arc" startOffset="50%" text-anchor="middle">CORREO MUNDIAL</textPath></text>
+    <text class="figure" x="52" y="55" text-anchor="middle" stroke="none">250</text>
+    <text x="52" y="70" text-anchor="middle">NACIONES</text>
+    <g stroke-width="3" stroke-linecap="round">
+      <path d="M96 34 q14 -7 28 0 t28 0 t28 0"/>
+      <path d="M96 46 q14 -7 28 0 t28 0 t28 0"/>
+      <path d="M96 58 q14 -7 28 0 t28 0 t28 0"/>
+      <path d="M96 70 q14 -7 28 0 t28 0 t28 0"/>
+    </g>
+  </svg>
+  <div class="wordmark">
+    <h1>Bandera y Sello</h1>
+    <p>Souvenir kits printed to order, one for every flag still flying.</p>
+  </div>
+</div>
+
+<div class="bar">
+  <div>
+    <p class="count" id="count"></p>
+    <div class="filter">
+      <label class="sr-only" for="q">Filter by country</label>
+      <input id="q" list="countries" placeholder="Filter by country…" autocomplete="off">
+      <datalist id="countries"></datalist>
+      <button class="ghost" id="clear" title="Show every country">&times;</button>
+    </div>
+    <button class="cart-open" id="cartOpen" aria-expanded="false">Cart <b id="cartCount">0</b></button>
+  </div>
+</div>
+
+<main>
+  <div id="note" class="note"></div>
+  <div id="grid"></div>
+  <div class="more" id="more"></div>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<aside class="drawer" id="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="cartTitle">
+  <header>
+    <h2 id="cartTitle">Your cart</h2>
+    <button id="cartClose" aria-label="Close the cart">&times;</button>
+  </header>
+  <ul class="lines" id="lines"></ul>
+  <div class="sum" id="sum"></div>
+</aside>
+
+<button class="counter-tab" id="counterOpen">Ask the counter</button>
+
+<aside class="counter" id="counter" hidden aria-label="Ask the counter">
+  <header>
+    <h2>The counter</h2>
+    <span>Catalogue questions</span>
+    <button id="counterClose" aria-label="Close the counter">&times;</button>
+  </header>
+  <div class="thread" id="thread" aria-live="polite"></div>
+  <form class="ask" id="ask">
+    <label class="sr-only" for="msg">Your question</label>
+    <textarea id="msg" rows="1" placeholder="Ask about a country or kit…"></textarea>
+    <button class="primary" type="submit">Send</button>
+  </form>
+  <p class="wire">Not wired up yet. Answers will read the live catalogue over MCP.</p>
+</aside>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const [$q, $list, $clear, $grid, $note, $count, $more] =
+  ['q', 'countries', 'clear', 'grid', 'note', 'count', 'more'].map($);
+
+const OUTAGE = 'The country catalogue is unreachable, so no kit can be built right now.';
+const CANCELS = ['var(--blue)', 'var(--red)', 'var(--olive)', 'var(--ink)'];
+const PAGE = 24;
+
+let countries = [];
+let country = null;
+let offset = 0;
+let total = 0;
+
+const note = (text) => { $note.textContent = text ?? ''; };
+
+function make(tag, props, ...children) {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children.filter(Boolean));
+  return node;
+}
+
+async function api(path) {
+  const res = await fetch(path);
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = new Error(body?.error?.message ?? `request failed (${res.status})`);
+    err.outage = res.status >= 500;
+    throw err;
+  }
+  return body;
+}
+
+const money = (amount, currency) =>
+  new Intl.NumberFormat(navigator.language, { style: 'currency', currency }).format(amount / 100);
+
+function outage(detail) {
+  if (detail) console.warn('[bandera]', detail);
+  note(''); $count.textContent = ''; $more.replaceChildren();
+  const retry = make('button', { className: 'primary', textContent: 'Try again' });
+  retry.addEventListener('click', () => reload());
+  $grid.replaceChildren(make('div', { className: 'panel' },
+    make('div', { className: 'big', textContent: '🏳️' }),
+    make('h2', { textContent: 'Return to sender' }),
+    make('p', { textContent: OUTAGE }),
+    retry,
+  ));
+}
+
+/* ---------- cart ---------- */
+
+const [$cartOpen, $cartCount, $scrim, $drawer, $cartClose, $lines, $sum] =
+  ['cartOpen', 'cartCount', 'scrim', 'drawer', 'cartClose', 'lines', 'sum'].map($);
+
+const CART_KEY = 'bandera.cart';
+const MAX_QTY = 10;   // the checkout schema caps a line at 10
+let cartError = '';
+
+function loadCart() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CART_KEY) ?? '[]');
+    return Array.isArray(saved) ? saved.filter((l) => l?.sku && l?.code && l?.quantity > 0) : [];
+  } catch {
+    return [];   // private browsing, or someone else's junk under our key
+  }
+}
+
+let cart = loadCart();
+
+function saveCart() {
+  try { localStorage.setItem(CART_KEY, JSON.stringify(cart)); } catch { /* private browsing */ }
+  drawCart();
+}
+
+function addToCart(item, button) {
+  const held = cart.find((l) => l.sku === item.sku && l.code === item.country.code);
+  if (held) held.quantity = Math.min(MAX_QTY, held.quantity + 1);
+  else cart.push({
+    sku: item.sku, code: item.country.code, country: item.country.name,
+    name: item.name, image: item.image, unitAmount: item.unitAmount,
+    currency: item.currency, quantity: 1,
+  });
+  cartError = '';
+  saveCart();
+  button.textContent = held?.quantity === MAX_QTY ? 'Ten is the limit' : 'Added';
+  setTimeout(() => { button.textContent = 'Add to cart'; }, 1400);
+}
+
+function cartRow(line) {
+  const step = (by) => {
+    line.quantity = Math.min(MAX_QTY, line.quantity + by);
+    if (line.quantity < 1) cart = cart.filter((l) => l !== line);
+    cartError = '';
+    saveCart();
+  };
+  const less = make('button', { type: 'button', textContent: '\u2212', ariaLabel: `One fewer ${line.name}` });
+  const more = make('button', {
+    type: 'button', textContent: '+', ariaLabel: `One more ${line.name}`,
+    disabled: line.quantity >= MAX_QTY,
+  });
+  const drop = make('button', { type: 'button', className: 'drop', textContent: 'Remove' });
+  less.addEventListener('click', () => step(-1));
+  more.addEventListener('click', () => step(1));
+  drop.addEventListener('click', () => { cart = cart.filter((l) => l !== line); cartError = ''; saveCart(); });
+
+  return make('li', {},
+    make('img', { src: line.image ?? '', alt: `Flag of ${line.country}`, loading: 'lazy' }),
+    make('div', {},
+      make('h3', { textContent: line.name }),
+      make('div', { className: 'meta', textContent: `${money(line.unitAmount, line.currency)} each` }),
+      make('div', { className: 'qty' }, less,
+        make('span', { textContent: String(line.quantity) }), more,
+        make('span', {
+          className: 'line-total',
+          textContent: money(line.unitAmount * line.quantity, line.currency),
+        }),
+      ),
+      drop,
+    ),
+  );
+}
+
+function drawCart() {
+  const count = cart.reduce((n, l) => n + l.quantity, 0);
+  $cartCount.textContent = String(count);
+  $cartOpen.ariaLabel = `Cart, ${count} ${count === 1 ? 'item' : 'items'}`;
+
+  if (!cart.length) {
+    const browse = make('button', { type: 'button', textContent: 'Browse the album' });
+    browse.addEventListener('click', () => showCart(false));
+    $lines.replaceChildren(make('li', { className: 'bare' },
+      make('p', { textContent: 'Nothing in your cart yet.' }), browse));
+    $sum.replaceChildren();
+    return;
+  }
+
+  // Subtotalled per currency: a Stripe session carries one, and the server
+  // refuses a mixed order, so a mixed cart has to show why it cannot be paid.
+  const totals = new Map();
+  for (const l of cart) totals.set(l.currency, (totals.get(l.currency) ?? 0) + l.unitAmount * l.quantity);
+
+  const go = make('button', { className: 'primary', textContent: 'Go to checkout' });
+  go.addEventListener('click', () => payFor(go));
+
+  $lines.replaceChildren(...cart.map(cartRow));
+  $sum.replaceChildren(
+    ...[...totals].map(([currency, amount]) => make('div', { className: 'row' },
+      make('span', { textContent: totals.size > 1 ? `Subtotal in ${currency.toUpperCase()}` : 'Subtotal' }),
+      make('span', { textContent: money(amount, currency) }),
+    )),
+    cartError ? make('p', { className: 'oops', textContent: cartError }) : null,
+    go,
+  );
+}
+
+async function payFor(button) {
+  button.disabled = true;
+  button.textContent = 'Opening checkout…';
+  cartError = '';
+  try {
+    const res = await fetch('/api/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        items: cart.map(({ sku, code, quantity }) => ({ kitSku: sku, countryCode: code, quantity })),
+      }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      const sku = body?.error?.details?.kitSku;
+      throw new Error(res.status >= 500
+        ? OUTAGE
+        : [body?.error?.message ?? 'checkout failed', sku].filter(Boolean).join(': '));
+    }
+    // The cart survives the trip: nothing is cleared until Stripe says paid.
+    location.href = body.url;
+  } catch (err) {
+    cartError = err.message;
+    drawCart();
+  }
+}
+
+function showCart(open) {
+  $drawer.hidden = !open;
+  $scrim.hidden = !open;
+  $cartOpen.setAttribute('aria-expanded', String(open));
+  // `inert` is the platform's own focus trap, so there is none to hand-roll
+  for (const el of document.querySelectorAll('.masthead, .bar, main, .counter, .counter-tab')) {
+    el.inert = open;
+  }
+  (open ? $cartClose : $cartOpen).focus();
+}
+
+$cartOpen.addEventListener('click', () => showCart(true));
+$cartClose.addEventListener('click', () => showCart(false));
+$scrim.addEventListener('click', () => showCart(false));
+drawCart();
+
+function card(item, index) {
+  const button = make('button', {
+    className: 'primary', textContent: 'Add to cart', disabled: !item.purchasable,
+  });
+  if (item.purchasable) button.addEventListener('click', () => addToCart(item, button));
+
+  return make('article', { style: `--cancel:${CANCELS[index % CANCELS.length]}` },
+    make('div', { className: 'shot' },
+      make('img', { src: item.image ?? '', alt: `Flag of ${item.country.name}`, loading: 'lazy' }),
+      make('span', { className: 'chip', textContent: item.country.code }),
+    ),
+    make('div', { className: 'body' },
+      make('h3', { textContent: item.name }),
+      make('p', { textContent: item.description }),
+      item.unavailableReason
+        ? make('div', { className: 'why', textContent: item.unavailableReason })
+        : null,
+      make('div', { className: 'foot' },
+        make('span', { className: 'price', textContent: money(item.unitAmount, item.currency) }),
+        button,
+      ),
+    ),
+  );
+}
+
+function renderMore() {
+  $more.replaceChildren();
+  if (offset >= total) return;
+  const button = make('button', { textContent: `Load more (${total - offset} to go)` });
+  button.addEventListener('click', () => { button.disabled = true; page(); });
+  $more.append(button);
+}
+
+async function page() {
+  const query = new URLSearchParams({ limit: PAGE, offset });
+  if (country) query.set('country', country.code);
+  try {
+    const data = await api(`/api/souvenirs?${query}`);
+    total = data.total;
+    $grid.append(...data.items.map((item, i) => card(item, offset + i)));
+    offset += data.items.length;
+    $count.textContent = country
+      ? `${total} souvenirs for ${country.name}`
+      : `${total} souvenirs from ${countries.length || '…'} countries`;
+    renderMore();
+    note('');
+  } catch (err) {
+    if (err.outage) return outage(err.message);
+    note(err.message);
+  }
+}
+
+function reload() {
+  offset = 0; total = 0;
+  $grid.replaceChildren();
+  $more.replaceChildren();
+  return page();
+}
+
+function filter(value) {
+  const key = value.trim().toLowerCase();
+  if (!key) { if (country) { country = null; reload(); } return; }
+  const match = countries.find((c) =>
+    `${c.name} (${c.code})`.toLowerCase() === key
+    || c.name.toLowerCase() === key
+    || c.code.toLowerCase() === key
+    || c.alpha2.toLowerCase() === key);
+  if (!match || match.code === country?.code) return;
+  country = match;
+  reload();
+}
+
+/* ---------- the counter (design only) ---------- */
+
+const [$counter, $tab, $close, $thread, $ask, $msg] =
+  ['counter', 'counterOpen', 'counterClose', 'thread', 'ask', 'msg'].map($);
+
+const OPENERS = [
+  'Which kits ship for Japan?',
+  'What goes into the Bandera kit?',
+  'Any kit under 20 euros?',
+];
+
+// ponytail: canned reply, no model behind it. Swap the body for POST /api/chat
+// once the assistant and its catalogue MCP are wired; nothing else here changes.
+async function answer(question) {
+  await new Promise((done) => setTimeout(done, 600));
+  return `I cannot answer "${question}" yet — the catalogue tools are not connected. `
+    + 'Once they are, I will read stock, kit templates and country data to answer here.';
+}
+
+function bubble(who, text) {
+  return make('div', { className: `msg ${who}`, textContent: text });
+}
+
+function openers() {
+  const list = make('div', { className: 'openers' },
+    make('p', { textContent: 'Ask about any of the 250 countries in stock.' }));
+  for (const text of OPENERS) {
+    const chip = make('button', { type: 'button', textContent: text });
+    chip.addEventListener('click', () => send(text));
+    list.append(chip);
+  }
+  return list;
+}
+
+async function send(question) {
+  const text = question.trim();
+  if (!text) return;
+  $thread.querySelector('.openers')?.remove();
+  $thread.append(bubble('you', text));
+  const working = bubble('reply working', 'Checking the catalogue…');
+  $thread.append(working);
+  $thread.scrollTop = $thread.scrollHeight;
+
+  working.replaceWith(bubble('reply', await answer(text)));
+  $thread.scrollTop = $thread.scrollHeight;
+}
+
+function counterOpen(open) {
+  $counter.hidden = !open;
+  $tab.hidden = open;
+  if (open) { if (!$thread.children.length) $thread.append(openers()); $msg.focus(); }
+  else $tab.focus();
+}
+
+$tab.addEventListener('click', () => counterOpen(true));
+$close.addEventListener('click', () => counterOpen(false));
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!$drawer.hidden) return showCart(false);
+  if (!$counter.hidden) counterOpen(false);
+});
+$ask.addEventListener('submit', (e) => { e.preventDefault(); send($msg.value); $msg.value = ''; $msg.style.height = ''; });
+$msg.addEventListener('input', () => {
+  $msg.style.height = '';
+  $msg.style.height = `${$msg.scrollHeight}px`;
+});
+$msg.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $ask.requestSubmit(); }
+});
+
+/* ---------- post-payment confirmation ---------- */
+
+function receipt(data) {
+  const paid = data.paymentStatus === 'paid' || data.paymentStatus === 'no_payment_required';
+  const items = data.items ?? [];
+  const rows = [
+    ['Email', data.email],
+    ['Total', data.amountTotal != null ? money(data.amountTotal, data.currency) : null],
+  ].filter(([, v]) => v != null && v !== '');
+
+  return make('div', { className: 'receipt' },
+    make('div', { className: 'top' },
+      make('div', { className: `tick${paid ? '' : ' pending'}`, textContent: paid ? '✓' : '…' }),
+      make('h2', { textContent: paid ? 'Payment confirmed' : 'Payment pending' }),
+      make('p', { className: 'sub', textContent: paid
+        ? 'Your souvenir is on its way.'
+        : `Stripe reports this session as ${data.paymentStatus ?? data.status}.` }),
+    ),
+    ...items.map((item) => make('div', { className: 'item' },
+      item.image ? make('img', { src: item.image, alt: '' }) : null,
+      make('div', {},
+        make('h3', { textContent: item.name ?? 'Souvenir kit' }),
+        make('div', {
+          className: 'meta',
+          textContent: [item.countryCode, item.quantity > 1 ? `${item.quantity} of them` : null]
+            .filter(Boolean).join(', '),
+        }),
+      ),
+      item.amountTotal != null
+        ? make('span', { className: 'line-total', textContent: money(item.amountTotal, data.currency) })
+        : null,
+    )),
+    make('dl', {}, ...rows.flatMap(([label, value]) => [
+      make('dt', { textContent: label }),
+      make('dd', { textContent: String(value) }),
+    ])),
+    make('div', { className: 'actions' },
+      make('a', { href: '/' }, make('button', { className: 'primary', textContent: 'Back to the shop',
+        style: 'width:100%' })),
+    ),
+  );
+}
+
+async function confirmation() {
+  const id = new URLSearchParams(location.search).get('session_id');
+  $q.closest('.filter').hidden = true;
+
+  if (!id) {
+    $grid.replaceChildren(make('div', { className: 'panel' },
+      make('div', { className: 'big', textContent: '🧾' }),
+      make('h2', { textContent: 'No order to show' }),
+      make('p', { textContent: 'This page needs the session_id Stripe sends you back with.' }),
+    ));
+    return;
+  }
+
+  $grid.classList.add('skeleton');
+  $grid.replaceChildren(make('div', { className: 'panel' },
+    make('div', { className: 'big', textContent: '🧾' }),
+    make('h2', { textContent: 'Checking your payment…' }),
+  ));
+
+  try {
+    $grid.replaceChildren(receipt(await api(`/api/checkout/${encodeURIComponent(id)}`)));
+  } catch (err) {
+    $grid.replaceChildren(make('div', { className: 'panel' },
+      make('div', { className: 'big', textContent: '🧾' }),
+      make('h2', { textContent: 'We could not find that order' }),
+      make('p', { textContent: err.message }),
+      make('a', { href: '/' }, make('button', { className: 'primary', textContent: 'Back to the shop' })),
+    ));
+  } finally {
+    $grid.classList.remove('skeleton');
+  }
+}
+
+/* ---------- boot ---------- */
+
+async function start() {
+  if (location.pathname === '/success') {
+    cart = [];
+    saveCart();
+    return confirmation();
+  }
+
+  if (location.pathname === '/cancel') note('Checkout cancelled. Nothing was charged.');
+
+  await page();
+
+  try {
+    countries = await api('/api/countries');
+  } catch (err) {
+    return outage(err.message);
+  }
+  $list.append(...countries.map((c) => new Option(`${c.name} (${c.code})`)));
+  $q.placeholder = `Filter ${countries.length} countries…`;
+  if (!country) $count.textContent = `${total} souvenirs from ${countries.length} countries`;
+
+  $q.addEventListener('input', () => filter($q.value));
+  $clear.addEventListener('click', () => { $q.value = ''; filter(''); });
+}
+
+start();
+</script>

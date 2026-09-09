@@ -1,0 +1,462 @@
+openapi: 3.1.0
+info:
+  title: Bandera y Sello API
+  version: 1.0.0
+  description: |
+    Country-themed souvenir kits. Kit rows live in Postgres, country data comes from an
+    upstream countries API (cached in-process for 24h), checkout goes to Stripe.
+    Names/descriptions are rendered from `{placeholder}` templates against country data.
+servers:
+  - url: http://localhost:3000
+
+paths:
+  /health:
+    get:
+      summary: Liveness + database reachability
+      responses:
+        '200':
+          description: Database answered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { const: ok } }
+        '503':
+          $ref: '#/components/responses/Error'
+
+  /api/countries:
+    get:
+      summary: Every usable country, sorted by name
+      responses:
+        '200':
+          description: Country catalogue
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Country' }
+        '502': { $ref: '#/components/responses/Error' }
+
+  /api/countries/{code}:
+    get:
+      summary: One country by alpha-2 or alpha-3 code
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/CountryCode' }
+      responses:
+        '200':
+          description: Country
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Country' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+
+  /api/kits:
+    get:
+      summary: Active kits, optionally rendered for one country
+      description: |
+        Without `country`, returns the raw templates. With `country`, returns exactly what
+        `POST /api/checkout` would send to Stripe, plus whether it can be bought.
+      parameters:
+        - name: country
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/CountryCode' }
+      responses:
+        '200':
+          description: Kits
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  oneOf:
+                    - $ref: '#/components/schemas/KitTemplate'
+                    - $ref: '#/components/schemas/KitForCountry'
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+
+  /api/souvenirs:
+    get:
+      summary: Every kit × every country, flattened and paginated
+      parameters:
+        - name: country
+          in: query
+          required: false
+          description: Restrict to a single country
+          schema: { $ref: '#/components/schemas/CountryCode' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 48 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: One page of souvenirs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, limit, offset, items]
+                properties:
+                  total: { type: integer, description: countries × active kits }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Souvenir' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+
+  /api/shipping/destinations:
+    get:
+      summary: Shipping zones and the countries we will not ship to
+      description: A static table (src/parcel.ts), not the carrier's coverage API.
+      responses:
+        '200':
+          description: Zones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  zones:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        zone: { type: string }
+                        methods: { type: array, items: { type: string } }
+                        countries:
+                          oneOf:
+                            - { type: array, items: { type: string } }
+                            - { type: string, examples: ['everywhere else'] }
+                  notServed: { type: array, items: { type: string } }
+
+  /api/shipping/quote:
+    get:
+      summary: Quote carrier shipping for an order
+      description: |
+        Live rates from the carrier for one destination. The order's kits are summed into a
+        single parcel (weight adds, boxes stack) before rating.
+
+        Quote only: checkout charges for the kits and collects no delivery address, so this
+        price is never taken. An unserviceable destination is a 200 with `serviceable: false`,
+        not an error — it is a true answer to a well-formed question.
+      parameters:
+        - name: country
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/CountryCode' }
+        - name: items
+          in: query
+          required: true
+          description: '`sku:qty` pairs, up to 20'
+          schema: { type: string, pattern: '^[a-z0-9-]{1,64}:([1-9]|10)(,[a-z0-9-]{1,64}:([1-9]|10)){0,19}$' }
+          examples: { two: { value: 'flag-and-seal:2,capital-postcards:1' } }
+      responses:
+        '200':
+          description: A quote, or a serviceable=false answer
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [country, serviceable]
+                properties:
+                  country:
+                    type: object
+                    properties:
+                      code: { type: string }
+                      name: { type: string }
+                  zone: { type: string }
+                  serviceable: { type: boolean }
+                  reason: { type: string, description: 'Present when serviceable is false' }
+                  parcel:
+                    type: object
+                    properties:
+                      weightGrams: { type: integer }
+                      lengthCm: { type: integer }
+                      widthCm: { type: integer }
+                      heightCm: { type: integer }
+                  methods:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        carrier: { type: string }
+                        service: { type: string }
+                        amount: { type: integer, description: 'Minor units, like every other price here' }
+                        currency: { type: string }
+                        estimatedDays: { type: [integer, 'null'] }
+        '400':
+          description: '`invalid_request`'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '404':
+          description: '`country_not_found` or `kit_not_found`'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '502':
+          description: '`shipping_upstream` — the carrier is unreachable'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503':
+          description: '`shipping_unconfigured` — no carrier key on this deployment'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /api/checkout:
+    post:
+      summary: Hold stock and create a Stripe Checkout session
+      description: |
+        One order, one to twenty lines. Stock lives on the kit, not the kit-country pair,
+        so quantities are summed per sku and held in a single transaction in sku order;
+        a cart that cannot be filled leaves no stock held. A Stripe session carries one
+        currency, so a cart spanning two is refused. Stock held by an abandoned session
+        is not released.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [kitSku, countryCode]
+                    properties:
+                      kitSku: { $ref: '#/components/schemas/KitSku' }
+                      countryCode: { $ref: '#/components/schemas/CountryCode' }
+                      quantity: { type: integer, minimum: 1, maximum: 10, default: 1 }
+      responses:
+        '201':
+          description: Session created; send the buyer to `url`
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessionId, url, amountTotal, currency, items]
+                properties:
+                  sessionId: { type: string, examples: ['cs_test_a1b2c3'] }
+                  url: { type: [string, 'null'], format: uri }
+                  amountTotal: { type: [integer, 'null'] }
+                  currency: { type: [string, 'null'] }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kitSku: { type: string }
+                        countryCode: { type: string }
+                        quantity: { type: integer }
+                        name: { type: string }
+                        description: { type: string }
+                        image: { type: [string, 'null'], format: uri }
+        '400':
+          description: Body failed validation (`invalid_request`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '404':
+          description: '`country_not_found` or `kit_not_found`'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '409':
+          description: '`kit_unavailable` — inactive or not enough stock; `details` carries stock/requested'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '422':
+          description: '`kit_not_renderable` (missing country data or bad flag), `mixed_currency`, or `stripe_failed` on bad input'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '502':
+          description: '`countries_upstream` or `stripe_failed`'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /api/checkout/{sessionId}:
+    get:
+      summary: Read back a checkout session (post-payment confirmation)
+      description: Session ids are unguessable, so the id is the only credential.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^cs_[A-Za-z0-9_]{10,200}$' }
+      responses:
+        '200':
+          description: Session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: [string, 'null'], enum: [open, complete, expired, null] }
+                  paymentStatus: { type: [string, 'null'] }
+                  amountTotal: { type: [integer, 'null'] }
+                  currency: { type: [string, 'null'] }
+                  email: { type: [string, 'null'], format: email }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: [string, 'null'] }
+                        image: { type: [string, 'null'], format: uri }
+                        kitSku: { type: [string, 'null'] }
+                        countryCode: { type: [string, 'null'] }
+                        quantity: { type: [integer, 'null'] }
+                        amountTotal: { type: [integer, 'null'] }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+
+  /:
+    get:
+      summary: The shop (single static HTML page)
+      responses:
+        '200':
+          description: HTML
+          content: { text/html: { schema: { type: string } } }
+  /success:
+    get:
+      summary: Same page as `/`; Stripe success redirect target
+      responses:
+        '200':
+          description: HTML
+          content: { text/html: { schema: { type: string } } }
+  /cancel:
+    get:
+      summary: Same page as `/`; Stripe cancel redirect target
+      responses:
+        '200':
+          description: HTML
+          content: { text/html: { schema: { type: string } } }
+
+components:
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_request
+                - route_not_found
+                - internal_error
+                - db_unavailable
+                - countries_upstream
+                - country_not_found
+                - kit_not_found
+                - kit_unavailable
+                - kit_not_renderable
+                - stripe_failed
+                - session_not_found
+                - mixed_currency
+                - shipping_upstream
+                - shipping_unconfigured
+            message: { type: string }
+            details: { description: Present on validation errors and `kit_unavailable` }
+
+    CountryCode:
+      type: string
+      pattern: '^[A-Za-z]{2,3}$'
+      description: Alpha-2 or alpha-3, case-insensitive
+      examples: [CO, COL]
+
+    KitSku:
+      type: string
+      pattern: '^[a-z0-9-]{1,64}$'
+      examples: [pin-set]
+
+    Country:
+      type: object
+      required: [code, alpha2, name, capital, currency, flag]
+      properties:
+        code: { type: string, description: alpha-3, examples: [COL] }
+        alpha2: { type: string, description: alpha-2, or empty if upstream omits it }
+        name: { type: string }
+        capital: { type: [string, 'null'] }
+        currency:
+          type: [object, 'null']
+          properties:
+            code: { type: string }
+            name: { type: string }
+            symbol: { type: [string, 'null'] }
+        flag:
+          type: object
+          properties:
+            url: { type: string, format: uri }
+            emoji: { type: [string, 'null'] }
+
+    KitTemplate:
+      description: Shape returned by `GET /api/kits` with no `country`
+      type: object
+      required: [sku, unitAmount, currency, stock, nameTemplate, descriptionTemplate]
+      properties:
+        sku: { $ref: '#/components/schemas/KitSku' }
+        unitAmount: { type: integer, description: Minor units }
+        currency: { type: string }
+        stock: { type: integer }
+        nameTemplate:
+          type: string
+          description: '`{country}`, `{capital}`, `{currency}`, `{code}` placeholders'
+        descriptionTemplate: { type: string }
+
+    KitForCountry:
+      description: Shape returned by `GET /api/kits?country=…`
+      type: object
+      required: [sku, unitAmount, currency, stock, name, description, image, purchasable, unavailableReason]
+      properties:
+        sku: { $ref: '#/components/schemas/KitSku' }
+        unitAmount: { type: integer }
+        currency: { type: string }
+        stock: { type: integer }
+        name: { type: string, maxLength: 250 }
+        description: { type: string, maxLength: 500 }
+        image:
+          type: [string, 'null']
+          format: uri
+          description: https only; null when the flag URL is unusable
+        purchasable: { type: boolean }
+        unavailableReason:
+          type: [string, 'null']
+          description: Why it can't be sold, e.g. "out of stock" or "no capital data for X"
+
+    Souvenir:
+      type: object
+      required: [id, sku, country, name, description, image, unitAmount, currency, purchasable, unavailableReason]
+      properties:
+        id: { type: string, description: '`{sku}:{alpha3}`', examples: ['pin-set:COL'] }
+        sku: { $ref: '#/components/schemas/KitSku' }
+        country:
+          type: object
+          properties:
+            code: { type: string }
+            name: { type: string }
+            emoji: { type: [string, 'null'] }
+        name: { type: string, maxLength: 250 }
+        description: { type: string, maxLength: 500 }
+        image: { type: [string, 'null'], format: uri }
+        unitAmount: { type: integer }
+        currency: { type: string }
+        purchasable: { type: boolean }
+        unavailableReason: { type: [string, 'null'] }
