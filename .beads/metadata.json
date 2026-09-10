@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "FULLAPI",
+  "project_id": "d74adbb7-de48-4763-9ae0-0a7d50e42fd0"
+}
