@@ -342,6 +342,7 @@
   <header>
     <h2>The counter</h2>
     <span>Catalogue questions</span>
+    <button id="counterClear" aria-label="Clear the conversation">Clear</button>
     <button id="counterClose" aria-label="Close the counter">&times;</button>
   </header>
   <div class="thread" id="thread" aria-live="polite"></div>
@@ -350,7 +351,7 @@
     <textarea id="msg" rows="1" placeholder="Ask about a country or kit…"></textarea>
     <button class="primary" type="submit">Send</button>
   </form>
-  <p class="wire">Not wired up yet. Answers will read the live catalogue over MCP.</p>
+  <p class="wire">Answers read the live catalogue over MCP.</p>
 </aside>
 
 <script type="module">
@@ -625,8 +626,8 @@ function filter(value) {
 
 /* ---------- the counter (design only) ---------- */
 
-const [$counter, $tab, $close, $thread, $ask, $msg] =
-  ['counter', 'counterOpen', 'counterClose', 'thread', 'ask', 'msg'].map($);
+const [$counter, $tab, $close, $clearChat, $thread, $ask, $msg] =
+  ['counter', 'counterOpen', 'counterClose', 'counterClear', 'thread', 'ask', 'msg'].map($);
 
 const OPENERS = [
   'Which kits ship for Japan?',
@@ -634,12 +635,24 @@ const OPENERS = [
   'Any kit under 20 euros?',
 ];
 
-// ponytail: canned reply, no model behind it. Swap the body for POST /api/chat
-// once the assistant and its catalogue MCP are wired; nothing else here changes.
+const history = [];
+
 async function answer(question) {
-  await new Promise((done) => setTimeout(done, 600));
-  return `I cannot answer "${question}" yet — the catalogue tools are not connected. `
-    + 'Once they are, I will read stock, kit templates and country data to answer here.';
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ message: question, history: history.slice(-10) }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    if (body?.error?.code === 'chat_unconfigured') {
+      return 'The assistant is not set up on this deployment yet.';
+    }
+    if (res.status === 429) return "That's a lot of questions — give it a minute and try again.";
+    return 'Something went wrong reaching the assistant. Try again in a moment.';
+  }
+  history.push({ role: 'user', content: question }, { role: 'assistant', content: body.reply });
+  return body.reply;
 }
 
 function bubble(who, text) {
@@ -677,8 +690,15 @@ function counterOpen(open) {
   else $tab.focus();
 }
 
+function resetChat() {
+  history.length = 0;
+  $thread.replaceChildren(openers());
+  $msg.focus();
+}
+
 $tab.addEventListener('click', () => counterOpen(true));
 $close.addEventListener('click', () => counterOpen(false));
+$clearChat.addEventListener('click', resetChat);
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!$drawer.hidden) return showCart(false);

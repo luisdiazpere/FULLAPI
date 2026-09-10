@@ -1,4 +1,4 @@
-const BASE = (process.env.SHOP_BASE_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
+const BASE = (process.env.SHOP_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3000}`).replace(/\/+$/, '');
 
 // Longer than the shop's own 10s upstream budget (src/countries.ts:62): one call
 // here can fan out to REST Countries, Postgres and Stripe.

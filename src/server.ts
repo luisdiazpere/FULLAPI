@@ -16,6 +16,7 @@ import { clean, httpsImage, render } from './format.ts';
 import { stripe, loadSession } from './stripeClient.ts';
 import webhooks from './webhooks.ts';
 import { runMigrations } from './migrate.ts';
+import { allowChat, chatConfigured, chatReply, ChatUnconfiguredError, ChatUpstreamError } from './chat.ts';
 
 const app = Fastify({
   logger: true,
@@ -518,6 +519,60 @@ app.get<{ Params: { sessionId: string } }>(
       }
       req.log.error({ err }, 'stripe session lookup failed');
       return reply.code(502).send(fail('stripe_failed', 'could not read the checkout session'));
+    }
+  },
+);
+
+const CHAT_MESSAGE_MAX = 800;
+
+type ChatBody = { message: string; history?: { role: 'user' | 'assistant'; content: string }[] };
+
+app.post<{ Body: ChatBody }>(
+  '/api/chat',
+  {
+    schema: {
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['message'],
+        properties: {
+          message: { type: 'string', minLength: 1, maxLength: CHAT_MESSAGE_MAX },
+          history: {
+            type: 'array',
+            maxItems: 10,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['role', 'content'],
+              properties: {
+                role: { type: 'string', enum: ['user', 'assistant'] },
+                content: { type: 'string', minLength: 1, maxLength: CHAT_MESSAGE_MAX },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  async (req, reply) => {
+    if (!chatConfigured()) {
+      return reply.code(503).send(fail('chat_unconfigured', 'DEEPSEEK_API_KEY is not set'));
+    }
+    if (!allowChat(req.ip)) {
+      return reply.code(429).send(fail('rate_limited', 'too many chat messages, slow down'));
+    }
+
+    try {
+      const text = await chatReply(req.body.message, req.body.history ?? []);
+      return { reply: text };
+    } catch (err) {
+      if (err instanceof ChatUnconfiguredError) {
+        return reply.code(503).send(fail('chat_unconfigured', err.message));
+      }
+      if (err instanceof ChatUpstreamError) {
+        return reply.code(502).send(fail('chat_upstream', err.message));
+      }
+      throw err;
     }
   },
 );
