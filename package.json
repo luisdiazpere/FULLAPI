@@ -9,6 +9,7 @@
     "dev": "node --env-file=.env --watch src/server.ts",
     "start": "node --env-file=.env src/server.ts",
     "test": "node --test test/*.test.ts",
+    "test:integration": "bash scripts/test-integration.sh",
     "mcp": "node src/mcp/stdio.ts",
     "mcp:http": "node --env-file=.env src/mcp/http.ts"
   },

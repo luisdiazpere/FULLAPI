@@ -21,6 +21,15 @@ npm test
 restcountries.com) and a Stripe secret key (`STRIPE_SECRET_KEY`). The server
 refuses to boot with either missing.
 
+`npm test` is pure and hermetic (no env, no DB) by design, so `src/orders.ts`
+and `src/webhooks.ts` — the webhook claim/dedupe logic — aren't in it.
+`npm run test:integration` covers those: it spins up a throwaway `scratchtest`
+database on the same Postgres container (never your dev data), runs the real
+migration chain against it, and drives the actual webhook routes with signed
+payloads. Needs `docker compose up -d` and a filled-in `.env`. There's no CI
+in this repo, so it's a local-only safety net — run it by hand before
+touching either file.
+
 ## Endpoints
 
 | Method | Path | Notes |
@@ -81,9 +90,13 @@ of email through Brevo's SMTP relay:
 
 Orders (email, payment/shipping status, tracking number) live in a new
 `orders` table; `processed_webhook_events` makes both webhooks idempotent
-against Stripe/Shippo's own retries. See `db/002_orders.sql` — it only
-auto-runs on a fresh `docker compose` volume, so an existing dev DB needs
-`psql $DATABASE_URL -f db/002_orders.sql` run by hand once.
+against Stripe/Shippo's own retries: an event id is claimed atomically before
+the handler runs and released again if it throws, so a failed send stays
+retryable instead of being swallowed as a duplicate.
+
+Migrations in `db/` no longer need running by hand. `docker compose`'s
+`initdb.d` only fires on a fresh volume, so `src/migrate.ts` applies them on
+boot instead — that is also what provisions a hosted database on first deploy.
 
 Setup, one time, outside this repo:
 
@@ -105,12 +118,18 @@ and logged (Brevo creds), same as `SHIPPO_API_KEY` being optional today.
 
 ## Known shortcuts
 
-Grep for `ponytail:` comments. Two today: the country catalog is cached in
-process (fine for one instance), and checkout holds stock immediately without a
-`checkout.session.expired` webhook to release abandoned carts. The second one
-bites harder now that one abandoned checkout can hold up to 20 lines of stock.
-The chat panel on the shop page is front-end only: its `answer()` stub returns a
-canned reply until the assistant and its catalogue MCP are wired up.
+Grep for `ponytail:` comments — seven today. The one that actually costs money:
+checkout holds stock the moment the Stripe session is created and nothing
+releases it, so every abandoned cart leaks up to 20 lines of stock until someone
+puts them back by hand. There is no `checkout.session.expired` webhook yet.
+
+The rest are bounded: the country catalog and the chat rate limiter are both
+in-process (fine while this is one instance, wrong the moment it is two),
+`src/parcel.ts` stacks a box without bin packing and reads a static zone table
+rather than the carrier's coverage API, `src/match.ts` does prefix and substring
+matching only so a typo finds nothing, and `src/clerkWebhook.ts` deliberately
+marks an event handled only after the welcome email sends — a duplicate hello
+under a concurrent retry, traded against never retrying a failed send.
 
 ## Notes from wiring it up
 
