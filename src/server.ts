@@ -15,6 +15,7 @@ import { UpstreamError, findCountry, listCountries, type Country } from './count
 import { clean, httpsImage, render } from './format.ts';
 import { stripe, loadSession } from './stripeClient.ts';
 import webhooks from './webhooks.ts';
+import { runMigrations } from './migrate.ts';
 
 const app = Fastify({
   logger: true,
@@ -539,6 +540,8 @@ app.setErrorHandler((err: FastifyError, _req, reply) => {
   const status = err.statusCode && err.statusCode >= 400 && err.statusCode < 500 ? err.statusCode : 500;
   return reply.code(status).send(fail('internal_error', 'something broke on our side'));
 });
+
+await runMigrations();
 
 app.listen({ port: env.PORT, host: '0.0.0.0' }).catch((err) => {
   app.log.error(err);
