@@ -293,6 +293,18 @@
   .account form input { width: 100%; }
   .account form .primary { width: 100%; }
   .auth-error { margin: 0; min-height: 1.05rem; font-size: .8125rem; color: var(--red); }
+
+  .divider {
+    display: flex; align-items: center; gap: .625rem; margin: 0 1rem .875rem;
+    font-size: .6875rem; text-transform: uppercase; letter-spacing: .04em; color: #16233b73;
+  }
+  .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--rule); }
+  .google-btn {
+    width: calc(100% - 2rem); margin: 0 1rem .875rem;
+    display: flex; align-items: center; justify-content: center; gap: .5rem;
+  }
+  .google-btn svg { flex: none; width: 1rem; height: 1rem; }
+
   .switch { margin: 0; padding: 0 1rem 1rem; font-size: .8125rem; color: #16233ba8; }
   .switch button {
     border: 0; background: none; padding: 0; font: inherit; color: var(--blue); text-decoration: underline;
@@ -357,7 +369,7 @@
 
 <div class="bar">
   <div>
-    <div class="account-wrap">
+    <div class="account-wrap" id="accountWrap">
       <button class="account-open" id="accountOpen" aria-expanded="false">Log in</button>
       <aside class="account" id="account" hidden aria-label="Your account">
         <header>
@@ -377,6 +389,16 @@
             <p class="auth-error" id="accountError"></p>
             <button class="primary" type="submit" id="accountSubmit">Log in</button>
           </form>
+          <p class="divider">or</p>
+          <button type="button" class="google-btn" id="googleOpen">
+            <svg viewBox="0 0 18 18" aria-hidden="true">
+              <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
+              <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+              <path fill="#FBBC05" d="M3.964 10.706A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.706V4.962H.957A9.001 9.001 0 0 0 0 9c0 1.452.348 2.827.957 4.038l3.007-2.332z"/>
+              <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.962L3.964 7.294C4.672 5.167 6.656 3.58 9 3.58z"/>
+            </svg>
+            Continue with Google
+          </button>
           <p class="switch">
             <span id="switchPrompt">New here?</span>
             <button type="button" id="accountSwitch">Sign up</button>
@@ -430,6 +452,21 @@
   <p class="wire">Answers read the live catalogue over MCP.</p>
 </aside>
 
+<!-- Loaded synchronously (no defer/async) so window.Clerk exists before the module
+     script below runs. data-clerk-publishable-key lets the SDK auto-construct that
+     instance and resolve the right Frontend API itself, so this CDN build works for
+     any Clerk instance without us hosting a per-instance script URL.
+     Version is pinned (not a floating "@5") with an SRI hash because this script runs
+     on the same page shoppers type passwords into and hand off to Stripe on — pinning
+     is what makes the hash meaningful, and the hash is what stops jsdelivr (or anyone
+     between us and it) from silently swapping the file. Bump both together on purpose,
+     periodically; check Clerk's changelog first. -->
+<script
+  crossorigin="anonymous"
+  data-clerk-publishable-key="__CLERK_PUBLISHABLE_KEY__"
+  src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5.127.2/dist/clerk.browser.js"
+  integrity="sha384-NkP+lutjgR3pxcv81cUNtgKM8gCiC1pueCOR+ufqfrAA1U09bnxQw1/n9BpHCl+H"
+></script>
 <script type="module">
 const $ = (id) => document.getElementById(id);
 const [$q, $list, $clear, $grid, $note, $count, $more] =
@@ -484,11 +521,11 @@ function outage(detail) {
 const [
   $accountWrap, $accountOpen, $account, $accountClose, $accountBody,
   $accountForm, $accountEmail, $accountPassword, $accountError, $accountSubmit,
-  $accountSwitch, $switchPrompt, $accountTitle,
+  $accountSwitch, $switchPrompt, $accountTitle, $googleOpen,
 ] = [
   'accountWrap', 'accountOpen', 'account', 'accountClose', 'accountBody',
   'accountForm', 'accountEmail', 'accountPassword', 'accountError', 'accountSubmit',
-  'accountSwitch', 'switchPrompt', 'accountTitle',
+  'accountSwitch', 'switchPrompt', 'accountTitle', 'googleOpen',
 ].map($);
 
 let session = null;      // { email } | null
@@ -551,6 +588,75 @@ async function refreshSession() {
   await renderAccount();
 }
 
+/* ---------- Google sign-in (Clerk handles the OAuth redirect, this button and
+   everything after is ours) ---------- */
+
+const CLERK_PUBLISHABLE_KEY = '__CLERK_PUBLISHABLE_KEY__';
+const GOOGLE_RETURN_PARAM = 'clerk_google';
+
+// The script tag's data-clerk-publishable-key attribute already made window.Clerk;
+// we just have to wait for it to finish loading before using it.
+let clerkLoading = null;
+function loadClerk() {
+  clerkLoading ??= window.Clerk.load().then(() => window.Clerk);
+  return clerkLoading;
+}
+
+$googleOpen.addEventListener('click', async () => {
+  $accountError.textContent = '';
+  if (!CLERK_PUBLISHABLE_KEY) {
+    $accountError.textContent = 'Google sign-in is not configured on this deployment.';
+    return;
+  }
+  $googleOpen.disabled = true;
+  try {
+    const clerk = await loadClerk();
+    const returnUrl = `${location.origin}${location.pathname}?${GOOGLE_RETURN_PARAM}=1`;
+    await clerk.client.signIn.authenticateWithRedirect({
+      strategy: 'oauth_google',
+      redirectUrl: returnUrl,
+      redirectUrlComplete: returnUrl,
+    });
+  } catch {
+    $accountError.textContent = 'Could not start Google sign-in. Try again.';
+    $googleOpen.disabled = false;
+  }
+});
+
+/** Runs on every load; only does something when the URL carries the marker this same
+ * page put there before redirecting to Google. Handles both possible SDK behaviours —
+ * handleRedirectCallback finishing in place, or navigating and reloading us here with
+ * the session already set — by checking for an existing session before calling it. */
+async function completeGoogleSignIn() {
+  const params = new URLSearchParams(location.search);
+  if (params.get(GOOGLE_RETURN_PARAM) !== '1') return false;
+  history.replaceState(null, '', location.pathname);
+  if (!CLERK_PUBLISHABLE_KEY) return false;
+
+  accountSetOpen(true);
+  try {
+    const clerk = await loadClerk();
+    if (!clerk.session) await clerk.handleRedirectCallback({});
+    const token = await clerk.session?.getToken();
+    if (!token) throw new Error('no Clerk session after redirect');
+    const res = await fetch('/api/auth/google-callback', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionToken: token }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      $accountError.textContent = body?.error?.message ?? 'Google sign-in failed. Try again.';
+      return true;
+    }
+    session = body;
+    await renderAccount();
+  } catch {
+    $accountError.textContent = 'Google sign-in failed. Try again.';
+  }
+  return true;
+}
+
 async function logout() {
   await fetch('/api/auth/logout', { method: 'POST' });
   session = null;
@@ -595,7 +701,7 @@ document.addEventListener('click', (e) => {
   accountSetOpen(false);
 });
 
-refreshSession();
+completeGoogleSignIn().then((handled) => { if (!handled) refreshSession(); });
 
 /* ---------- cart ---------- */
 

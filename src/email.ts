@@ -146,6 +146,76 @@ function paymentConfirmationHtml(order: {
 </html>`;
 }
 
+const WELCOME_TEXT =
+  "You're in. Flags, wax seals, capital postcards, and currency coin frames from real countries — "
+  + 'pick one and we\'ll get it in the mail.';
+
+/** Same card shell as paymentConfirmationHtml, minus the order-specific rows. */
+function welcomeHtml(): string {
+  const shopUrl = (process.env.SHOP_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3000}`).replace(/\/+$/, '');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>Welcome to Bandera y Sello</title>
+<style>
+  @media (max-width: 480px) {
+    .card { width: 100% !important; }
+    .pad { padding-left: 22px !important; padding-right: 22px !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:#E7DECB;">
+  <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">
+    Your account's ready. Now go pick a country.
+  </div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#E7DECB;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" class="card" width="600" cellpadding="0" cellspacing="0"
+               style="width:600px;max-width:600px;background-color:#FBF8F1;border:1px solid #DED2B4;">
+          <tr>
+            <td style="height:8px;line-height:8px;font-size:0;background:repeating-linear-gradient(45deg,#9E2B25 0 10px,#FBF8F1 10px 20px,#1F3A5F 20px 30px,#FBF8F1 30px 40px);">&nbsp;</td>
+          </tr>
+          <tr>
+            <td class="pad" align="center" style="padding:36px 40px 8px;">
+              <span style="font-family:Georgia,'Times New Roman',serif;font-size:14px;letter-spacing:0.5px;color:#1F3A5F;">Bandera y Sello</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="pad" align="center" style="padding:28px 40px 0;">
+              <h1 style="margin:0 0 10px;font-family:Georgia,'Times New Roman',serif;font-size:24px;line-height:1.3;font-weight:bold;color:#2A2620;">You're in</h1>
+              <p style="margin:0 0 28px;font-family:Georgia,'Times New Roman',serif;font-size:16px;line-height:1.5;color:#4A4438;">Flags, wax seals, capital postcards, and currency coin frames from real countries — pick one and we'll get it in the mail.</p>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:0 40px 8px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="background-color:#9E2B25;">
+                    <a href="${shopUrl}" style="display:inline-block;padding:13px 28px;font-family:Georgia,'Times New Roman',serif;font-size:15px;color:#FBF8F1;text-decoration:none;">Browse the shop</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td class="pad" align="center" style="padding:32px 40px 36px;">
+              <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:13px;color:#8A8272;">Bandera y Sello. Reply to this email with any questions.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
 const SHIPPING_TEMPLATES: Record<string, { subject: string; body: string }> = {
   in_transit: { subject: 'Your order has shipped', body: 'Your order {sessionId} has shipped{tracking}.' },
   delivered: { subject: 'Your order was delivered', body: 'Your order {sessionId} was delivered{tracking}.' },
@@ -174,6 +244,10 @@ export async function sendPaymentConfirmation(
   });
   const html = paymentConfirmationHtml({ ...order, items: order.items ?? [] });
   await send(to, 'Your order is confirmed', text, html);
+}
+
+export async function sendWelcomeEmail(to: string): Promise<void> {
+  await send(to, 'Welcome to Bandera y Sello', WELCOME_TEXT, welcomeHtml());
 }
 
 export async function sendShippingStatusEmail(

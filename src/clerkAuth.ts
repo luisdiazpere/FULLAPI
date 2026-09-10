@@ -1,4 +1,4 @@
-import { createClerkClient } from '@clerk/backend';
+import { createClerkClient, verifyToken } from '@clerk/backend';
 import { isClerkAPIResponseError } from '@clerk/backend/errors';
 
 export class ClerkUnconfiguredError extends Error {}
@@ -69,4 +69,28 @@ export async function clerkVerify(email: string, password: string): Promise<bool
     throwIfMisconfigured(err);
     return false;
   }
+}
+
+/**
+ * The browser already holds a Clerk session once the Google redirect completes, but that
+ * session token is client-supplied and so untrusted until verifyToken checks its signature
+ * against Clerk's own keys. A verified token only proves *which user* (the `sub` claim) —
+ * the primary email still has to come from the Backend API, same as the password path.
+ */
+export async function clerkEmailFromSessionToken(sessionToken: string): Promise<string> {
+  const key = process.env.CLERK_SECRET_KEY;
+  if (!key) throw new ClerkUnconfiguredError('CLERK_SECRET_KEY is not set');
+
+  const payload = await verifyToken(sessionToken, { secretKey: key }).catch((err: unknown) => {
+    throwIfMisconfigured(err);
+    throw new ClerkAuthError('invalid_session', 'could not verify the Google sign-in');
+  });
+
+  const user = await clerk().users.getUser(payload.sub).catch((err: unknown) => {
+    throwIfMisconfigured(err);
+    throw err;
+  });
+  const email = user.emailAddresses.find((addr) => addr.id === user.primaryEmailAddressId)?.emailAddress;
+  if (!email) throw new ClerkAuthError('no_email', 'that Google account has no email Clerk could verify');
+  return email.toLowerCase();
 }

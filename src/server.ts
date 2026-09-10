@@ -15,11 +15,19 @@ import { UpstreamError, findCountry, listCountries, type Country } from './count
 import { clean, httpsImage, render } from './format.ts';
 import { stripe, loadSession } from './stripeClient.ts';
 import webhooks from './webhooks.ts';
+import clerkWebhook from './clerkWebhook.ts';
 import { runMigrations } from './migrate.ts';
 import { allowChat, chatConfigured, chatReply, ChatUnconfiguredError, ChatUpstreamError } from './chat.ts';
 import { allowAuthAttempt, clearSessionCookie, parseSessionCookie, sessionCookie } from './auth.ts';
 import { createSession, destroySession, getSession, type Session } from './sessions.ts';
-import { ClerkAuthError, ClerkUnconfiguredError, clerkConfigured, clerkSignUp, clerkVerify } from './clerkAuth.ts';
+import {
+  ClerkAuthError,
+  ClerkUnconfiguredError,
+  clerkConfigured,
+  clerkEmailFromSessionToken,
+  clerkSignUp,
+  clerkVerify,
+} from './clerkAuth.ts';
 
 const app = Fastify({
   logger: true,
@@ -29,6 +37,7 @@ const app = Fastify({
   ajv: { customOptions: { removeAdditional: false } },
 });
 await app.register(webhooks);
+await app.register(clerkWebhook);
 
 const MAX_LINES = 20;
 const NAME_MAX = 250;
@@ -610,6 +619,44 @@ app.post<{ Body: AuthBody }>(
   },
 );
 
+type GoogleCallbackBody = { sessionToken: string };
+
+const googleCallbackBodySchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['sessionToken'],
+  properties: { sessionToken: { type: 'string', minLength: 10, maxLength: 4000 } },
+} as const;
+
+/** The browser lands here right after Clerk finishes the Google redirect; it hands us the
+ * Clerk session token it just got, which we verify ourselves before minting our own cookie. */
+app.post<{ Body: GoogleCallbackBody }>(
+  '/api/auth/google-callback',
+  { schema: { body: googleCallbackBodySchema } },
+  async (req, reply) => {
+    if (!clerkConfigured()) return reply.code(503).send(fail('auth_unconfigured', 'CLERK_SECRET_KEY is not set'));
+    if (!allowAuthAttempt(req.ip)) {
+      return reply.code(429).send(fail('rate_limited', 'too many attempts, slow down'));
+    }
+    let email: string;
+    try {
+      email = await clerkEmailFromSessionToken(req.body.sessionToken);
+    } catch (err) {
+      if (err instanceof ClerkUnconfiguredError) {
+        req.log.error({ err }, 'Clerk rejected our secret key');
+        return reply.code(503).send(fail('auth_unconfigured', 'auth is misconfigured on this deployment'));
+      }
+      if (err instanceof ClerkAuthError) {
+        return reply.code(401).send(fail(err.code, err.message));
+      }
+      throw err;
+    }
+    const { token, expiresAt } = await createSession(email);
+    reply.header('set-cookie', sessionCookie(token, expiresAt, isSecureRequest(req)));
+    return reply.code(200).send({ email });
+  },
+);
+
 app.post('/api/auth/logout', async (req, reply) => {
   const token = parseSessionCookie(req.headers.cookie);
   if (token) await destroySession(token);
@@ -712,8 +759,14 @@ app.post<{ Body: ChatBody }>(
   },
 );
 
-// One static page. No bundler, no @fastify/static: it is a single file.
-const page = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+// One static page. No bundler, no @fastify/static: it is a single file. The publishable
+// key is safe client-side (it's the point of a *publishable* key) so it's templated in
+// here rather than fetched — one less round trip before the Google button can work.
+// split/join, not replaceAll: replaceAll still honors $&-style patterns in the
+// replacement string, and this one lands inside a JS string literal in the page.
+const page = (await readFile(new URL('../public/index.html', import.meta.url), 'utf8'))
+  .split('__CLERK_PUBLISHABLE_KEY__')
+  .join(process.env.CLERK_PUBLISHABLE_KEY ?? '');
 for (const path of ['/', '/success', '/cancel']) {
   app.get(path, (_req, reply) => reply.type('text/html; charset=utf-8').send(page));
 }
