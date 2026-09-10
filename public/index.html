@@ -387,6 +387,9 @@
           <button id="accountClose" aria-label="Close">&times;</button>
         </header>
         <div id="accountBody">
+          <!-- Two views, toggled. Never replaceChildren() on the guest view:
+               detaching the form is how logging out used to strand the panel. -->
+          <div id="accountGuest">
           <form id="accountForm">
             <div>
               <label class="sr-only" for="accountEmail">Email</label>
@@ -413,6 +416,8 @@
             <span id="switchPrompt">New here?</span>
             <button type="button" id="accountSwitch">Sign up</button>
           </p>
+          </div>
+          <div id="accountUser" hidden></div>
         </div>
       </aside>
     </div>
@@ -522,11 +527,11 @@ function outage(detail) {
 /* ---------- account: sign up, log in, your orders ---------- */
 
 const [
-  $accountWrap, $accountOpen, $account, $accountClose, $accountBody,
+  $accountWrap, $accountOpen, $account, $accountClose, $accountGuest, $accountUser,
   $accountForm, $accountEmail, $accountPassword, $accountError, $accountSubmit,
   $accountSwitch, $switchPrompt, $accountTitle, $googleOpen,
 ] = [
-  'accountWrap', 'accountOpen', 'account', 'accountClose', 'accountBody',
+  'accountWrap', 'accountOpen', 'account', 'accountClose', 'accountGuest', 'accountUser',
   'accountForm', 'accountEmail', 'accountPassword', 'accountError', 'accountSubmit',
   'accountSwitch', 'switchPrompt', 'accountTitle', 'googleOpen',
 ].map($);
@@ -551,16 +556,24 @@ async function renderLoggedIn() {
   $accountTitle.textContent = 'Your account';
   const logoutButton = make('button', { type: 'button', textContent: 'Log out' });
   logoutButton.addEventListener('click', logout);
-  $accountBody.replaceChildren(
+  // Only the signed-in container is rebuilt. The guest view is hidden, never
+  // detached, so the form and every cached reference to it survive a logout.
+  $accountUser.replaceChildren(
     make('p', { className: 'whoami' }, 'Signed in as', make('b', { textContent: session.email })),
     orders.orders.length
       ? make('ul', { className: 'orders' }, ...orders.orders.map(orderRow))
       : make('p', { className: 'empty', textContent: 'No orders yet.' }),
     make('footer', {}, logoutButton),
   );
+  $accountGuest.hidden = true;
+  $accountUser.hidden = false;
 }
 
 function renderLoggedOut() {
+  $accountUser.hidden = true;
+  $accountUser.replaceChildren();
+  $accountGuest.hidden = false;
+  $accountError.textContent = '';
   $accountTitle.textContent = authMode === 'login' ? 'Log in' : 'Sign up';
   $accountSubmit.textContent = authMode === 'login' ? 'Log in' : 'Create account';
   $accountPassword.autocomplete = authMode === 'login' ? 'current-password' : 'new-password';
