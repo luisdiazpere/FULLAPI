@@ -165,7 +165,7 @@
 
   /* ---------- cart ---------- */
 
-  .cart-open { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+  .cart-open { display: flex; align-items: center; gap: .5rem; }
   .cart-open b { font-variant-numeric: tabular-nums; }
   .scrim { position: fixed; inset: 0; z-index: 7; background: #16233b59; }
   .scrim[hidden], .drawer[hidden] { display: none; }
@@ -264,7 +264,8 @@
 
   /* ---------- the account: sign up, log in, your orders ---------- */
 
-  .account-wrap { position: relative; }
+  /* Account and cart sit together on the right; search keeps the left. */
+  .account-wrap { position: relative; margin-left: auto; }
   .account-open {
     border: 0; background: none; padding: 0; font: 500 .875rem/1 var(--sans); color: var(--ink);
     text-decoration: underline; text-underline-offset: .1875rem; max-width: 12rem;
@@ -274,7 +275,9 @@
 
   .account[hidden] { display: none; }
   .account {
-    position: absolute; top: calc(100% + .625rem); left: 0; z-index: 6;
+    /* Anchored to the wrapper's right edge: it now sits at the right of the bar,
+       so opening leftward is what keeps it inside the viewport. */
+    position: absolute; top: calc(100% + .625rem); right: 0; z-index: 6;
     width: min(19rem, calc(100vw - 2rem));
     background: var(--stamp); border: 1px solid var(--ink); box-shadow: 6px 6px 0 var(--gum);
   }
@@ -369,6 +372,13 @@
 
 <div class="bar">
   <div>
+    <div class="filter">
+      <label class="sr-only" for="q">Filter by country</label>
+      <input id="q" list="countries" placeholder="Filter by country…" autocomplete="off">
+      <datalist id="countries"></datalist>
+      <button class="ghost" id="clear" title="Show every country">&times;</button>
+    </div>
+    <p class="count" id="count"></p>
     <div class="account-wrap" id="accountWrap">
       <button class="account-open" id="accountOpen" aria-expanded="false">Log in</button>
       <aside class="account" id="account" hidden aria-label="Your account">
@@ -406,13 +416,6 @@
         </div>
       </aside>
     </div>
-    <div class="filter">
-      <label class="sr-only" for="q">Filter by country</label>
-      <input id="q" list="countries" placeholder="Filter by country…" autocomplete="off">
-      <datalist id="countries"></datalist>
-      <button class="ghost" id="clear" title="Show every country">&times;</button>
-    </div>
-    <p class="count" id="count"></p>
     <button class="cart-open" id="cartOpen" aria-expanded="false">Cart <b id="cartCount">0</b></button>
   </div>
 </div>
@@ -701,7 +704,13 @@ document.addEventListener('click', (e) => {
   accountSetOpen(false);
 });
 
-completeGoogleSignIn().then((handled) => { if (!handled) refreshSession(); });
+// Session state must never depend on Clerk's SDK loading. It briefly did, and a
+// rejection here left `session` null forever: the account button stayed on "Log in"
+// and payFor() refused to start checkout for shoppers who were in fact signed in.
+// Google completion is best-effort on top; refreshSession() always runs.
+completeGoogleSignIn()
+  .catch((err) => { console.warn('[bandera] Google sign-in could not complete', err); })
+  .finally(() => refreshSession());
 
 /* ---------- cart ---------- */
 
@@ -796,7 +805,11 @@ function drawCart() {
   for (const l of cart) totals.set(l.currency, (totals.get(l.currency) ?? 0) + l.unitAmount * l.quantity);
 
   const go = make('button', { className: 'primary', textContent: 'Go to checkout' });
-  go.addEventListener('click', () => payFor(go));
+  // Stop the click here: when payFor() opens the account panel for a logged-out
+  // shopper, this same click would otherwise keep bubbling to the document
+  // outside-click listener, which sees a now-visible panel and a target outside
+  // it, and shuts it again before anyone can read it.
+  go.addEventListener('click', (e) => { e.stopPropagation(); payFor(go); });
 
   $lines.replaceChildren(...cart.map(cartRow));
   $sum.replaceChildren(
