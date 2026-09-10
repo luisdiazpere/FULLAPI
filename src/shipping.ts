@@ -42,28 +42,30 @@ export function minorUnits(amount: string): number | null {
   return Math.round(major * 100);
 }
 
+const addressFrom = () => ({
+  country: process.env.SHIP_FROM_COUNTRY ?? 'US',
+  zip: process.env.SHIP_FROM_ZIP ?? '',
+  city: process.env.SHIP_FROM_CITY ?? '',
+  state: process.env.SHIP_FROM_STATE ?? '',
+  street1: process.env.SHIP_FROM_STREET ?? '',
+});
+
+const parcelPayload = (parcel: Parcel) => ({
+  weight: String(parcel.weightGrams),
+  massUnit: 'g' as const,
+  length: String(parcel.lengthCm),
+  width: String(parcel.widthCm),
+  height: String(parcel.heightCm),
+  distanceUnit: 'cm' as const,
+});
+
 export async function quote(parcel: Parcel, toAlpha2: string): Promise<Rate[]> {
   const shipment = await shippo()
     .shipments.create(
       {
-        addressFrom: {
-          country: process.env.SHIP_FROM_COUNTRY ?? 'US',
-          zip: process.env.SHIP_FROM_ZIP ?? '',
-          city: process.env.SHIP_FROM_CITY ?? '',
-          state: process.env.SHIP_FROM_STATE ?? '',
-          street1: process.env.SHIP_FROM_STREET ?? '',
-        },
+        addressFrom: addressFrom(),
         addressTo: { country: toAlpha2.toUpperCase() },
-        parcels: [
-          {
-            weight: String(parcel.weightGrams),
-            massUnit: 'g',
-            length: String(parcel.lengthCm),
-            width: String(parcel.widthCm),
-            height: String(parcel.heightCm),
-            distanceUnit: 'cm',
-          },
-        ],
+        parcels: [parcelPayload(parcel)],
         async: false,
       },
       { timeoutMs: TIMEOUT_MS },
@@ -85,4 +87,66 @@ export async function quote(parcel: Parcel, toAlpha2: string): Promise<Rate[]> {
       estimatedDays: rate.estimatedDays ?? null,
     }];
   });
+}
+
+export type ShipToAddress = {
+  name?: string;
+  street1?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country: string;
+};
+
+export type PurchasedLabel = {
+  shipmentId: string;
+  transactionId: string;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  carrier: string | null;
+};
+
+/**
+ * Buys the cheapest available label for a real destination address and
+ * returns its tracking info. `metadata` is the Stripe session id: Shippo
+ * echoes it back on every tracking webhook event, which is how a later
+ * track_updated event finds its way back to the right order without a
+ * separate correlation table.
+ */
+export async function purchaseLabel(
+  parcel: Parcel,
+  addressTo: ShipToAddress,
+  metadata: string,
+): Promise<PurchasedLabel> {
+  const shipment = await shippo()
+    .shipments.create(
+      { addressFrom: addressFrom(), addressTo, parcels: [parcelPayload(parcel)], metadata, async: false },
+      { timeoutMs: TIMEOUT_MS },
+    )
+    .catch((cause: unknown) => {
+      throw new ShippingUpstreamError(cause instanceof Error ? cause.message : 'carrier request failed');
+    });
+
+  const cheapest = shipment.rates.reduce<(typeof shipment.rates)[number] | null>(
+    (best, rate) => (!best || Number(rate.amount) < Number(best.amount) ? rate : best),
+    null,
+  );
+  if (!cheapest) throw new ShippingUpstreamError(`no rates available to ${addressTo.country}`);
+
+  const transaction = await shippo()
+    .transactions.create(
+      { rate: cheapest.objectId, labelFileType: 'PDF', metadata, async: false },
+      { timeoutMs: TIMEOUT_MS },
+    )
+    .catch((cause: unknown) => {
+      throw new ShippingUpstreamError(cause instanceof Error ? cause.message : 'label purchase failed');
+    });
+
+  return {
+    shipmentId: shipment.objectId,
+    transactionId: transaction.objectId ?? '',
+    trackingNumber: transaction.trackingNumber ?? null,
+    trackingUrl: transaction.trackingUrlProvider ?? null,
+    carrier: cheapest.provider ?? null,
+  };
 }

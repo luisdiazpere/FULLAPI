@@ -13,6 +13,8 @@ import {
 } from './shipping.ts';
 import { UpstreamError, findCountry, listCountries, type Country } from './countries.ts';
 import { clean, httpsImage, render } from './format.ts';
+import { stripe, loadSession } from './stripeClient.ts';
+import webhooks from './webhooks.ts';
 
 const app = Fastify({
   logger: true,
@@ -21,7 +23,7 @@ const app = Fastify({
   // body fields. At a trust boundary we'd rather say no than quietly accept.
   ajv: { customOptions: { removeAdditional: false } },
 });
-const stripe = new Stripe(env.STRIPE_SECRET_KEY);
+await app.register(webhooks);
 
 const MAX_LINES = 20;
 const NAME_MAX = 250;
@@ -312,6 +314,26 @@ app.get<{ Querystring: { country: string; items: string } }>(
   },
 );
 
+// Stripe requires an explicit ISO-3166-1 alpha-2 allow-list for shipping address
+// collection (no wildcard) — this is every country Stripe itself supports for it.
+const STRIPE_SHIPPABLE_COUNTRIES: Stripe.Checkout.SessionCreateParams.ShippingAddressCollection.AllowedCountry[] = [
+  'AC', 'AD', 'AE', 'AF', 'AG', 'AI', 'AL', 'AM', 'AO', 'AQ', 'AR', 'AT', 'AU', 'AW', 'AX', 'AZ',
+  'BA', 'BB', 'BD', 'BE', 'BF', 'BG', 'BH', 'BI', 'BJ', 'BL', 'BM', 'BN', 'BO', 'BQ', 'BR', 'BS',
+  'BT', 'BV', 'BW', 'BY', 'BZ', 'CA', 'CD', 'CF', 'CG', 'CH', 'CI', 'CK', 'CL', 'CM', 'CN', 'CO',
+  'CR', 'CV', 'CW', 'CY', 'CZ', 'DE', 'DJ', 'DK', 'DM', 'DO', 'DZ', 'EC', 'EE', 'EG', 'EH', 'ER',
+  'ES', 'ET', 'FI', 'FJ', 'FK', 'FO', 'FR', 'GA', 'GB', 'GD', 'GE', 'GF', 'GG', 'GH', 'GI', 'GL',
+  'GM', 'GN', 'GP', 'GQ', 'GR', 'GS', 'GT', 'GU', 'GW', 'GY', 'HK', 'HN', 'HR', 'HT', 'HU', 'ID',
+  'IE', 'IL', 'IM', 'IN', 'IO', 'IQ', 'IS', 'IT', 'JE', 'JM', 'JO', 'JP', 'KE', 'KG', 'KH', 'KI',
+  'KM', 'KN', 'KR', 'KW', 'KY', 'KZ', 'LA', 'LB', 'LC', 'LI', 'LK', 'LR', 'LS', 'LT', 'LU', 'LV',
+  'LY', 'MA', 'MC', 'MD', 'ME', 'MF', 'MG', 'MK', 'ML', 'MM', 'MN', 'MO', 'MQ', 'MR', 'MS', 'MT',
+  'MU', 'MV', 'MW', 'MX', 'MY', 'MZ', 'NA', 'NC', 'NE', 'NG', 'NI', 'NL', 'NO', 'NP', 'NR', 'NU',
+  'NZ', 'OM', 'PA', 'PE', 'PF', 'PG', 'PH', 'PK', 'PL', 'PM', 'PN', 'PR', 'PS', 'PT', 'PY', 'QA',
+  'RE', 'RO', 'RS', 'RU', 'RW', 'SA', 'SB', 'SC', 'SD', 'SE', 'SG', 'SH', 'SI', 'SJ', 'SK', 'SL',
+  'SM', 'SN', 'SO', 'SR', 'SS', 'ST', 'SV', 'SX', 'SZ', 'TA', 'TC', 'TD', 'TF', 'TG', 'TH', 'TJ',
+  'TK', 'TL', 'TM', 'TN', 'TO', 'TR', 'TT', 'TV', 'TW', 'TZ', 'UA', 'UG', 'US', 'UY', 'UZ', 'VA',
+  'VC', 'VE', 'VG', 'VN', 'VU', 'WF', 'WS', 'XK', 'YE', 'YT', 'ZA', 'ZM', 'ZW', 'ZZ',
+];
+
 type CheckoutBody = { items: CartLine[] };
 
 app.post<{ Body: CheckoutBody }>(
@@ -427,6 +449,7 @@ app.post<{ Body: CheckoutBody }>(
         mode: 'payment',
         success_url: env.CHECKOUT_SUCCESS_URL,
         cancel_url: env.CHECKOUT_CANCEL_URL,
+        shipping_address_collection: { allowed_countries: STRIPE_SHIPPABLE_COUNTRIES },
         line_items: lines.map(({ kit, country, product, quantity }) => ({
           quantity,
           price_data: {
@@ -479,32 +502,14 @@ app.get<{ Params: { sessionId: string } }>(
   },
   async (req, reply) => {
     try {
-      const session = await stripe.checkout.sessions.retrieve(req.params.sessionId, {
-        expand: ['line_items.data.price.product'],
-      });
-      const items = (session.line_items?.data ?? []).map((line) => {
-        const product = line.price?.product;
-        const named =
-          product && typeof product === 'object' && !('deleted' in product && product.deleted)
-            ? (product as Stripe.Product)
-            : null;
-        return {
-          name: named?.name ?? null,
-          image: named?.images?.[0] ?? null,
-          kitSku: named?.metadata?.kit_sku ?? null,
-          countryCode: named?.metadata?.country_code ?? null,
-          quantity: line.quantity ?? null,
-          amountTotal: line.amount_total ?? null,
-        };
-      });
-
+      const session = await loadSession(req.params.sessionId);
       return {
         status: session.status,
-        paymentStatus: session.payment_status,
-        amountTotal: session.amount_total,
+        paymentStatus: session.paymentStatus,
+        amountTotal: session.amountTotal,
         currency: session.currency,
-        email: session.customer_details?.email ?? null,
-        items,
+        email: session.email,
+        items: session.items,
       };
     } catch (err) {
       if (err instanceof Stripe.errors.StripeError && err.code === 'resource_missing') {

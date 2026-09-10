@@ -34,6 +34,8 @@ refuses to boot with either missing.
 | GET | `/api/souvenirs?country=JPN` | Same, narrowed to one country. Backs the filter |
 | GET | `/api/checkout/:sessionId` | Payment status and every purchased line. Backs the confirmation page |
 | POST | `/api/checkout` | `{ items: [{ kitSku, countryCode, quantity? }] }`, 1..20 lines -> 201 with the Stripe Checkout URL |
+| POST | `/api/webhooks/stripe` | Stripe webhook. On `checkout.session.completed`: records the order, emails a payment confirmation, buys a shipping label |
+| POST | `/api/webhooks/shippo` | Shippo tracking webhook (`?token=` required). Emails a delivery-status update on each carrier status change |
 
 ## Status codes
 
@@ -64,6 +66,42 @@ handler runs. SQL goes through parameterized queries only. Text bound for Stripe
 is stripped of control characters, whitespace-collapsed and truncated to Stripe's
 limits, and the flag URL must be a plain `https:` URL with no credentials before
 it is passed as a product image.
+
+## Order emails (payment confirmation + delivery status)
+
+Checkout now collects a real shipping address, and paying triggers two kinds
+of email through Brevo's SMTP relay:
+
+1. **Payment confirmed** — sent from `POST /api/webhooks/stripe` on
+   `checkout.session.completed`. The same handler then buys a Shippo shipping
+   label for the collected address.
+2. **Delivery status** (shipped / delivered / delivery problem / returned) —
+   sent from `POST /api/webhooks/shippo` whenever Shippo's `track_updated`
+   webhook reports a new carrier status for that label.
+
+Orders (email, payment/shipping status, tracking number) live in a new
+`orders` table; `processed_webhook_events` makes both webhooks idempotent
+against Stripe/Shippo's own retries. See `db/002_orders.sql` — it only
+auto-runs on a fresh `docker compose` volume, so an existing dev DB needs
+`psql $DATABASE_URL -f db/002_orders.sql` run by hand once.
+
+Setup, one time, outside this repo:
+
+- **Stripe**: `stripe listen --forward-to localhost:3000/api/webhooks/stripe`
+  locally (copy the printed signing secret into `STRIPE_WEBHOOK_SECRET`), or
+  add the endpoint for `checkout.session.completed` in the Stripe Dashboard
+  for a deployed URL.
+- **Brevo**: create an SMTP key in the Brevo dashboard and set
+  `BREVO_SMTP_USER`/`BREVO_SMTP_PASS`/`EMAIL_FROM` (the sender must be
+  verified in Brevo).
+- **Shippo**: register `https://<your-host>/api/webhooks/shippo?token=<SHIPPO_WEBHOOK_TOKEN>`
+  as a webhook for the `track_updated` event (Shippo dashboard or
+  `shippo.webhooks.create()`) — Shippo does not sign its payloads, so this
+  token is the access control for that endpoint.
+
+Any of these can be left unset: the affected webhook route then answers
+`503 webhook_unconfigured` (Stripe/Shippo secrets) or the email is skipped
+and logged (Brevo creds), same as `SHIPPO_API_KEY` being optional today.
 
 ## Known shortcuts
 

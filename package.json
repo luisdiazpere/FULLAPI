@@ -15,6 +15,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "fastify": "^5.2.1",
+    "nodemailer": "^10.0.2",
     "pg": "^8.13.1",
     "shippo": "^2.18.0",
     "stripe": "^17.5.0",
