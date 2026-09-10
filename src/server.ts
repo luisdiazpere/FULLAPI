@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import Fastify, { type FastifyError } from 'fastify';
+import Fastify, { type FastifyError, type FastifyRequest } from 'fastify';
 import Stripe from 'stripe';
 import { env } from './env.ts';
 import { pool, type Kit } from './db.ts';
@@ -17,6 +17,15 @@ import { stripe, loadSession } from './stripeClient.ts';
 import webhooks from './webhooks.ts';
 import { runMigrations } from './migrate.ts';
 import { allowChat, chatConfigured, chatReply, ChatUnconfiguredError, ChatUpstreamError } from './chat.ts';
+import {
+  allowAuthAttempt,
+  clearSessionCookie,
+  hashPassword,
+  parseSessionCookie,
+  sessionCookie,
+  verifyPassword,
+} from './auth.ts';
+import { createSession, destroySession, getSession, type Session } from './sessions.ts';
 
 const app = Fastify({
   logger: true,
@@ -38,6 +47,14 @@ const fail = (code: string, message: string, details?: unknown) => ({
 const countryCodeSchema = { type: 'string', pattern: '^[A-Za-z]{2,3}$' } as const;
 const sessionIdSchema = { type: 'string', pattern: '^cs_[A-Za-z0-9_]{10,200}$' } as const;
 const kitSkuSchema = { type: 'string', pattern: '^[a-z0-9-]{1,64}$' } as const;
+const emailSchema = { type: 'string', format: 'email', maxLength: 200 } as const;
+const passwordSchema = { type: 'string', minLength: 8, maxLength: 200 } as const;
+
+/** Reads and validates the session cookie; null if there is none or it is stale. */
+async function currentSession(req: { headers: { cookie?: string } }): Promise<Session | null> {
+  const token = parseSessionCookie(req.headers.cookie);
+  return token ? getSession(token) : null;
+}
 
 /** Renders one kit against one country, and says why it can't be sold if it can't. */
 function kitFor(kit: Kit, country: Country) {
@@ -367,6 +384,9 @@ app.post<{ Body: CheckoutBody }>(
     },
   },
   async (req, reply) => {
+    const session = await currentSession(req);
+    if (!session) return reply.code(401).send(fail('auth_required', 'log in to check out'));
+
     const { items } = req.body;
 
     // Countries are resolved before any stock moves: an upstream outage should
@@ -447,10 +467,11 @@ app.post<{ Body: CheckoutBody }>(
     }
 
     try {
-      const session = await stripe.checkout.sessions.create({
+      const checkoutSession = await stripe.checkout.sessions.create({
         mode: 'payment',
         success_url: env.CHECKOUT_SUCCESS_URL,
         cancel_url: env.CHECKOUT_CANCEL_URL,
+        customer_email: session.email,
         shipping_address_collection: { allowed_countries: STRIPE_SHIPPABLE_COUNTRIES },
         line_items: lines.map(({ kit, country, product, quantity }) => ({
           quantity,
@@ -469,10 +490,10 @@ app.post<{ Body: CheckoutBody }>(
       });
 
       return reply.code(201).send({
-        sessionId: session.id,
-        url: session.url,
-        amountTotal: session.amount_total,
-        currency: session.currency,
+        sessionId: checkoutSession.id,
+        url: checkoutSession.url,
+        amountTotal: checkoutSession.amount_total,
+        currency: checkoutSession.currency,
         items: lines.map(({ kit, country, product, quantity }) => ({
           kitSku: kit.sku,
           countryCode: country.code,
@@ -522,6 +543,113 @@ app.get<{ Params: { sessionId: string } }>(
     }
   },
 );
+
+/** Render terminates TLS at its edge and forwards plain HTTP, so req.protocol alone would say http. */
+const isSecureRequest = (req: FastifyRequest): boolean =>
+  req.headers['x-forwarded-proto'] === 'https' || req.protocol === 'https';
+
+type AuthBody = { email: string; password: string };
+
+const authBodySchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['email', 'password'],
+  properties: { email: emailSchema, password: passwordSchema },
+} as const;
+
+app.post<{ Body: AuthBody }>(
+  '/api/auth/signup',
+  { schema: { body: authBodySchema } },
+  async (req, reply) => {
+    if (!allowAuthAttempt(req.ip)) {
+      return reply.code(429).send(fail('rate_limited', 'too many attempts, slow down'));
+    }
+    const email = req.body.email.trim().toLowerCase();
+    const { rowCount } = await pool.query('SELECT 1 FROM users WHERE email = $1', [email]);
+    if (rowCount) {
+      return reply.code(409).send(fail('email_taken', 'an account with that email already exists'));
+    }
+
+    await pool.query(
+      'INSERT INTO users (email, password_hash) VALUES ($1, $2)',
+      [email, hashPassword(req.body.password)],
+    );
+    const { token, expiresAt } = await createSession(email);
+    reply.header('set-cookie', sessionCookie(token, expiresAt, isSecureRequest(req)));
+    return reply.code(201).send({ email });
+  },
+);
+
+app.post<{ Body: AuthBody }>(
+  '/api/auth/login',
+  { schema: { body: authBodySchema } },
+  async (req, reply) => {
+    if (!allowAuthAttempt(req.ip)) {
+      return reply.code(429).send(fail('rate_limited', 'too many attempts, slow down'));
+    }
+    const email = req.body.email.trim().toLowerCase();
+    const { rows } = await pool.query<{ password_hash: string }>(
+      'SELECT password_hash FROM users WHERE email = $1',
+      [email],
+    );
+    if (!rows[0] || !verifyPassword(req.body.password, rows[0].password_hash)) {
+      // Same message either way: it should not be possible to tell a wrong password
+      // from an email that was never registered.
+      return reply.code(401).send(fail('invalid_credentials', 'invalid email or password'));
+    }
+    const { token, expiresAt } = await createSession(email);
+    reply.header('set-cookie', sessionCookie(token, expiresAt, isSecureRequest(req)));
+    return { email };
+  },
+);
+
+app.post('/api/auth/logout', async (req, reply) => {
+  const token = parseSessionCookie(req.headers.cookie);
+  if (token) await destroySession(token);
+  reply.header('set-cookie', clearSessionCookie(isSecureRequest(req)));
+  return { ok: true };
+});
+
+app.get('/api/auth/me', async (req, reply) => {
+  const session = await currentSession(req);
+  if (!session) return reply.code(401).send(fail('not_logged_in', 'not logged in'));
+  return session;
+});
+
+type OrderRow = {
+  session_id: string;
+  amount_total: number | null;
+  currency: string | null;
+  payment_status: string;
+  shipping_status: string;
+  tracking_number: string | null;
+  tracking_url: string | null;
+  created_at: Date;
+};
+
+/** Order history for the logged-in account — the receipt trail, not a public lookup. */
+app.get('/api/orders', async (req, reply) => {
+  const session = await currentSession(req);
+  if (!session) return reply.code(401).send(fail('auth_required', 'log in to see your orders'));
+  const { rows } = await pool.query<OrderRow>(
+    `SELECT session_id, amount_total, currency, payment_status, shipping_status,
+            tracking_number, tracking_url, created_at
+     FROM orders WHERE email = $1 ORDER BY created_at DESC LIMIT 20`,
+    [session.email],
+  );
+  return {
+    orders: rows.map((r) => ({
+      sessionId: r.session_id,
+      amountTotal: r.amount_total,
+      currency: r.currency,
+      paymentStatus: r.payment_status,
+      shippingStatus: r.shipping_status,
+      trackingNumber: r.tracking_number,
+      trackingUrl: r.tracking_url,
+      createdAt: r.created_at,
+    })),
+  };
+});
 
 const CHAT_MESSAGE_MAX = 800;
 

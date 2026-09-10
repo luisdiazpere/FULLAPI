@@ -57,7 +57,7 @@
     display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
   }
   .count { margin: 0; font-size: .875rem; color: #16233bb0; font-variant-numeric: tabular-nums; }
-  .filter { margin-left: auto; display: flex; gap: .5rem; }
+  .filter { display: flex; gap: .5rem; }
 
   input, button, textarea {
     font: inherit; color: inherit; border-radius: 0;
@@ -165,7 +165,7 @@
 
   /* ---------- cart ---------- */
 
-  .cart-open { display: flex; align-items: center; gap: .5rem; }
+  .cart-open { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
   .cart-open b { font-variant-numeric: tabular-nums; }
   .scrim { position: fixed; inset: 0; z-index: 7; background: #16233b59; }
   .scrim[hidden], .drawer[hidden] { display: none; }
@@ -262,6 +262,55 @@
   .ask button { flex: none; align-self: flex-end; }
   .wire { margin: 0; padding: 0 1rem .75rem; font-size: .6875rem; color: #16233b8f; }
 
+  /* ---------- the account: sign up, log in, your orders ---------- */
+
+  .account-wrap { position: relative; }
+  .account-open {
+    border: 0; background: none; padding: 0; font: 500 .875rem/1 var(--sans); color: var(--ink);
+    text-decoration: underline; text-underline-offset: .1875rem; max-width: 12rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .account-open:hover { background: none; color: var(--blue); }
+
+  .account[hidden] { display: none; }
+  .account {
+    position: absolute; top: calc(100% + .625rem); left: 0; z-index: 6;
+    width: min(19rem, calc(100vw - 2rem));
+    background: var(--stamp); border: 1px solid var(--ink); box-shadow: 6px 6px 0 var(--gum);
+  }
+  .account > header {
+    display: flex; align-items: baseline; gap: .625rem;
+    padding: .875rem 1rem; border-bottom: 1px solid var(--rule);
+  }
+  .account > header h2 { margin: 0; font: 400 1.125rem/1 var(--serif); }
+  .account > header button {
+    margin-left: auto; border: 0; background: none; padding: 0 .25rem; font-size: 1.125rem; line-height: 1;
+  }
+  .account > header button:hover { background: none; color: var(--red); }
+
+  .account form { padding: 1rem; display: grid; gap: .625rem; }
+  .account form label { display: block; margin: 0 0 .25rem; font-size: .75rem; color: #16233ba8; }
+  .account form input { width: 100%; }
+  .account form .primary { width: 100%; }
+  .auth-error { margin: 0; min-height: 1.05rem; font-size: .8125rem; color: var(--red); }
+  .switch { margin: 0; padding: 0 1rem 1rem; font-size: .8125rem; color: #16233ba8; }
+  .switch button {
+    border: 0; background: none; padding: 0; font: inherit; color: var(--blue); text-decoration: underline;
+  }
+  .switch button:hover { background: none; color: var(--red); }
+
+  .whoami { margin: 0; padding: 1rem 1rem .75rem; font-size: .8125rem; color: #16233ba8; }
+  .whoami b { display: block; margin-top: .125rem; font: 400 1.0625rem/1.2 var(--serif); color: var(--ink); }
+
+  .orders { margin: 0; padding: 0; list-style: none; max-height: 13rem; overflow-y: auto; }
+  .orders li { padding: .625rem 1rem; border-top: 1px solid var(--rule); }
+  .orders .row { display: flex; justify-content: space-between; gap: .5rem; font-size: .875rem; }
+  .orders .meta { margin: .25rem 0 0; font-size: .75rem; color: #16233ba8; }
+  .orders .empty { padding: 0 1rem 1rem; margin: 0; font-size: .8125rem; color: #16233ba8; }
+
+  .account footer { padding: .875rem 1rem 1rem; border-top: 1px solid var(--rule); }
+  .account footer button { width: 100%; }
+
   @media (max-width: 52rem) {
     .masthead { padding: 2rem 1.25rem 1.5rem; gap: 1.25rem; }
     .postmark { width: 9.5rem; height: 5rem; }
@@ -308,13 +357,40 @@
 
 <div class="bar">
   <div>
-    <p class="count" id="count"></p>
+    <div class="account-wrap">
+      <button class="account-open" id="accountOpen" aria-expanded="false">Log in</button>
+      <aside class="account" id="account" hidden aria-label="Your account">
+        <header>
+          <h2 id="accountTitle">Log in</h2>
+          <button id="accountClose" aria-label="Close">&times;</button>
+        </header>
+        <div id="accountBody">
+          <form id="accountForm">
+            <div>
+              <label class="sr-only" for="accountEmail">Email</label>
+              <input id="accountEmail" type="email" placeholder="Email" autocomplete="email" required>
+            </div>
+            <div>
+              <label class="sr-only" for="accountPassword">Password</label>
+              <input id="accountPassword" type="password" placeholder="Password" autocomplete="current-password" minlength="8" required>
+            </div>
+            <p class="auth-error" id="accountError"></p>
+            <button class="primary" type="submit" id="accountSubmit">Log in</button>
+          </form>
+          <p class="switch">
+            <span id="switchPrompt">New here?</span>
+            <button type="button" id="accountSwitch">Sign up</button>
+          </p>
+        </div>
+      </aside>
+    </div>
     <div class="filter">
       <label class="sr-only" for="q">Filter by country</label>
       <input id="q" list="countries" placeholder="Filter by country…" autocomplete="off">
       <datalist id="countries"></datalist>
       <button class="ghost" id="clear" title="Show every country">&times;</button>
     </div>
+    <p class="count" id="count"></p>
     <button class="cart-open" id="cartOpen" aria-expanded="false">Cart <b id="cartCount">0</b></button>
   </div>
 </div>
@@ -402,6 +478,124 @@ function outage(detail) {
     retry,
   ));
 }
+
+/* ---------- account: sign up, log in, your orders ---------- */
+
+const [
+  $accountWrap, $accountOpen, $account, $accountClose, $accountBody,
+  $accountForm, $accountEmail, $accountPassword, $accountError, $accountSubmit,
+  $accountSwitch, $switchPrompt, $accountTitle,
+] = [
+  'accountWrap', 'accountOpen', 'account', 'accountClose', 'accountBody',
+  'accountForm', 'accountEmail', 'accountPassword', 'accountError', 'accountSubmit',
+  'accountSwitch', 'switchPrompt', 'accountTitle',
+].map($);
+
+let session = null;      // { email } | null
+let authMode = 'login';  // 'login' | 'signup'
+
+const orderStatus = (o) => (o.paymentStatus === 'paid' ? o.shippingStatus.replace('_', ' ') : o.paymentStatus);
+
+function orderRow(o) {
+  return make('li', {},
+    make('div', { className: 'row' },
+      make('span', { textContent: o.sessionId.slice(0, 14) + '…' }),
+      make('span', { textContent: money(o.amountTotal, o.currency) }),
+    ),
+    make('p', { className: 'meta', textContent: `${new Date(o.createdAt).toLocaleDateString()} — ${orderStatus(o)}` }),
+  );
+}
+
+async function renderLoggedIn() {
+  const orders = await api('/api/orders').catch(() => ({ orders: [] }));
+  $accountTitle.textContent = 'Your account';
+  const logoutButton = make('button', { type: 'button', textContent: 'Log out' });
+  logoutButton.addEventListener('click', logout);
+  $accountBody.replaceChildren(
+    make('p', { className: 'whoami' }, 'Signed in as', make('b', { textContent: session.email })),
+    orders.orders.length
+      ? make('ul', { className: 'orders' }, ...orders.orders.map(orderRow))
+      : make('p', { className: 'empty', textContent: 'No orders yet.' }),
+    make('footer', {}, logoutButton),
+  );
+}
+
+function renderLoggedOut() {
+  $accountTitle.textContent = authMode === 'login' ? 'Log in' : 'Sign up';
+  $accountSubmit.textContent = authMode === 'login' ? 'Log in' : 'Create account';
+  $accountPassword.autocomplete = authMode === 'login' ? 'current-password' : 'new-password';
+  $switchPrompt.textContent = authMode === 'login' ? 'New here?' : 'Already have an account?';
+  $accountSwitch.textContent = authMode === 'login' ? 'Sign up' : 'Log in';
+}
+
+async function renderAccount() {
+  if (session) {
+    $accountOpen.textContent = session.email;
+    await renderLoggedIn();
+  } else {
+    $accountOpen.textContent = 'Log in';
+    renderLoggedOut();
+  }
+}
+
+function accountSetOpen(open) {
+  $account.hidden = !open;
+  $accountOpen.setAttribute('aria-expanded', String(open));
+  if (open) (session ? $accountOpen : $accountEmail).focus();
+  else $accountOpen.focus();
+}
+
+async function refreshSession() {
+  const res = await fetch('/api/auth/me');
+  session = res.ok ? await res.json() : null;
+  await renderAccount();
+}
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  session = null;
+  accountSetOpen(false);
+  await renderAccount();
+}
+
+$accountOpen.addEventListener('click', () => accountSetOpen($account.hidden));
+$accountClose.addEventListener('click', () => accountSetOpen(false));
+$accountSwitch.addEventListener('click', () => {
+  authMode = authMode === 'login' ? 'signup' : 'login';
+  $accountError.textContent = '';
+  renderLoggedOut();
+});
+
+$accountForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $accountError.textContent = '';
+  $accountSubmit.disabled = true;
+  try {
+    const res = await fetch(`/api/auth/${authMode}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: $accountEmail.value.trim(), password: $accountPassword.value }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      $accountError.textContent = body?.error?.message ?? 'Something went wrong. Try again.';
+      return;
+    }
+    session = body;
+    $accountForm.reset();
+    await renderAccount();
+    accountSetOpen(false);
+  } finally {
+    $accountSubmit.disabled = false;
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if ($account.hidden || $accountWrap.contains(e.target)) return;
+  accountSetOpen(false);
+});
+
+refreshSession();
 
 /* ---------- cart ---------- */
 
@@ -510,6 +704,13 @@ function drawCart() {
 }
 
 async function payFor(button) {
+  if (!session) {
+    showCart(false);
+    $accountError.textContent = 'Log in to check out.';
+    accountSetOpen(true);
+    return;
+  }
+
   button.disabled = true;
   button.textContent = 'Opening checkout…';
   cartError = '';
@@ -702,6 +903,7 @@ $clearChat.addEventListener('click', resetChat);
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!$drawer.hidden) return showCart(false);
+  if (!$account.hidden) return accountSetOpen(false);
   if (!$counter.hidden) counterOpen(false);
 });
 $ask.addEventListener('submit', (e) => { e.preventDefault(); send($msg.value); $msg.value = ''; $msg.style.height = ''; });

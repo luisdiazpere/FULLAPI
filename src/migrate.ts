@@ -10,6 +10,7 @@ import { pool } from './db.ts';
 const MIGRATIONS: { file: string; table: string }[] = [
   { file: 'db/init.sql', table: 'kits' },
   { file: 'db/002_orders.sql', table: 'orders' },
+  { file: 'db/003_users.sql', table: 'users' },
 ];
 
 export async function runMigrations(): Promise<void> {

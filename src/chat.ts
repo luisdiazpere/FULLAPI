@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildServer } from './mcp/tools.ts';
+import { makeRateLimiter } from './rateLimit.ts';
 
 export class ChatUnconfiguredError extends Error {}
 export class ChatUpstreamError extends Error {}
@@ -115,20 +116,4 @@ export async function chatReply(message: string, history: ChatMessage[]): Promis
   }
 }
 
-/**
- * ponytail: in-memory, per-instance counter — fine for the single free-tier
- * instance this runs on. Swap for a shared store (Redis, etc.) if this ever
- * scales to more than one instance.
- */
-const hits = new Map<string, { count: number; resetAt: number }>();
-
-export function allowChat(ip: string, now = Date.now()): boolean {
-  const entry = hits.get(ip);
-  if (!entry || now > entry.resetAt) {
-    hits.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return true;
-  }
-  if (entry.count >= RATE_LIMIT) return false;
-  entry.count += 1;
-  return true;
-}
+export const allowChat = makeRateLimiter(RATE_LIMIT, RATE_WINDOW_MS);
