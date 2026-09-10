@@ -633,11 +633,14 @@ $googleOpen.addEventListener('click', async () => {
 async function completeGoogleSignIn() {
   const params = new URLSearchParams(location.search);
   if (params.get(GOOGLE_RETURN_PARAM) !== '1') return false;
-  history.replaceState(null, '', location.pathname);
   if (!CLERK_PUBLISHABLE_KEY) return false;
 
   accountSetOpen(true);
   try {
+    // Clerk returns here as /?__clerk_handshake=<jwt>&clerk_google=1 and its SDK
+    // needs that handshake token to establish the session. Tidying the address bar
+    // before this point threw the token away, so the session was always null and
+    // we never reached the backend at all — clean the URL in the finally instead.
     const clerk = await loadClerk();
     if (!clerk.session) await clerk.handleRedirectCallback({});
     const token = await clerk.session?.getToken();
@@ -654,8 +657,11 @@ async function completeGoogleSignIn() {
     }
     session = body;
     await renderAccount();
-  } catch {
+  } catch (err) {
+    console.warn('[bandera] Google sign-in did not complete', err);
     $accountError.textContent = 'Google sign-in failed. Try again.';
+  } finally {
+    window.history.replaceState(null, '', location.pathname);
   }
   return true;
 }
@@ -955,13 +961,15 @@ const OPENERS = [
   'Any kit under 20 euros?',
 ];
 
-const history = [];
+// Not `history`: a module-scope const by that name shadows window.history for the
+// whole file, which silently turned history.replaceState() into a TypeError.
+const chatHistory = [];
 
 async function answer(question) {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message: question, history: history.slice(-10) }),
+    body: JSON.stringify({ message: question, history: chatHistory.slice(-10) }),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
@@ -971,7 +979,7 @@ async function answer(question) {
     if (res.status === 429) return "That's a lot of questions — give it a minute and try again.";
     return 'Something went wrong reaching the assistant. Try again in a moment.';
   }
-  history.push({ role: 'user', content: question }, { role: 'assistant', content: body.reply });
+  chatHistory.push({ role: 'user', content: question }, { role: 'assistant', content: body.reply });
   return body.reply;
 }
 
@@ -1011,7 +1019,7 @@ function counterOpen(open) {
 }
 
 function resetChat() {
-  history.length = 0;
+  chatHistory.length = 0;
   $thread.replaceChildren(openers());
   $msg.focus();
 }
