@@ -570,10 +570,14 @@ async function renderLoggedIn() {
 }
 
 function renderLoggedOut() {
+  // Deliberately does NOT clear $accountError. This runs on every logged-out
+  // render, including the refreshSession() that follows a failed Google
+  // sign-in — clearing here wiped that failure's message ~3ms after it
+  // appeared. Stale errors are cleared where the intent is "start fresh":
+  // logging out, switching mode, and submitting the form.
   $accountUser.hidden = true;
   $accountUser.replaceChildren();
   $accountGuest.hidden = false;
-  $accountError.textContent = '';
   $accountTitle.textContent = authMode === 'login' ? 'Log in' : 'Sign up';
   $accountSubmit.textContent = authMode === 'login' ? 'Log in' : 'Create account';
   $accountPassword.autocomplete = authMode === 'login' ? 'current-password' : 'new-password';
@@ -614,7 +618,12 @@ const GOOGLE_RETURN_PARAM = 'clerk_google';
 // we just have to wait for it to finish loading before using it.
 let clerkLoading = null;
 function loadClerk() {
-  clerkLoading ??= window.Clerk.load().then(() => window.Clerk);
+  // Drop the cached promise if it rejects, or one bad load would be replayed to
+  // every later click and the button would stay dead until a full page reload.
+  clerkLoading ??= window.Clerk.load().then(() => window.Clerk).catch((err) => {
+    clerkLoading = null;
+    throw err;
+  });
   return clerkLoading;
 }
 
@@ -627,17 +636,55 @@ $googleOpen.addEventListener('click', async () => {
   $googleOpen.disabled = true;
   try {
     const clerk = await loadClerk();
+
+    // Clerk may already hold a session while this app does not — exactly the
+    // state our own earlier bugs left people in, since Google authenticated
+    // fine but we never minted our cookie. Starting another redirect from
+    // there is rejected by Clerk, so exchange the session we already have.
+    if (clerk.session) {
+      // Never fall through to a redirect from here: Clerk rejects one while a
+      // session is active, so a failed exchange would compound into a second,
+      // more confusing error. exchangeClerkSession reports its own failure.
+      await exchangeClerkSession(clerk);
+      $googleOpen.disabled = false;   // no navigation happens on this path
+      return;
+    }
+
     const returnUrl = `${location.origin}${location.pathname}?${GOOGLE_RETURN_PARAM}=1`;
     await clerk.client.signIn.authenticateWithRedirect({
       strategy: 'oauth_google',
       redirectUrl: returnUrl,
       redirectUrlComplete: returnUrl,
     });
-  } catch {
+  } catch (err) {
+    console.warn('[bandera] Google sign-in could not start', err);
     $accountError.textContent = 'Could not start Google sign-in. Try again.';
     $googleOpen.disabled = false;
   }
 });
+
+/**
+ * Trades a Clerk session for one of ours. Used both on the way back from the
+ * Google redirect and when Clerk already had a session before we asked.
+ * Returns true once our own cookie is set.
+ */
+async function exchangeClerkSession(clerk) {
+  const token = await clerk.session?.getToken();
+  if (!token) throw new Error('Clerk session produced no token');
+  const res = await fetch('/api/auth/google-callback', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionToken: token }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    $accountError.textContent = body?.error?.message ?? 'Google sign-in failed. Try again.';
+    return false;
+  }
+  session = body;
+  await renderAccount();
+  return true;
+}
 
 /** Runs on every load; only does something when the URL carries the marker this same
  * page put there before redirecting to Google. Handles both possible SDK behaviours —
@@ -656,20 +703,8 @@ async function completeGoogleSignIn() {
     // we never reached the backend at all — clean the URL in the finally instead.
     const clerk = await loadClerk();
     if (!clerk.session) await clerk.handleRedirectCallback({});
-    const token = await clerk.session?.getToken();
-    if (!token) throw new Error('no Clerk session after redirect');
-    const res = await fetch('/api/auth/google-callback', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionToken: token }),
-    });
-    const body = await res.json().catch(() => null);
-    if (!res.ok) {
-      $accountError.textContent = body?.error?.message ?? 'Google sign-in failed. Try again.';
-      return true;
-    }
-    session = body;
-    await renderAccount();
+    if (!clerk.session) throw new Error('no Clerk session after redirect');
+    await exchangeClerkSession(clerk);
   } catch (err) {
     console.warn('[bandera] Google sign-in did not complete', err);
     $accountError.textContent = 'Google sign-in failed. Try again.';
@@ -682,6 +717,7 @@ async function completeGoogleSignIn() {
 async function logout() {
   await fetch('/api/auth/logout', { method: 'POST' });
   session = null;
+  $accountError.textContent = '';   // don't carry an old failure into the next visit
   accountSetOpen(false);
   await renderAccount();
 }
