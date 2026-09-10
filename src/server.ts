@@ -17,15 +17,9 @@ import { stripe, loadSession } from './stripeClient.ts';
 import webhooks from './webhooks.ts';
 import { runMigrations } from './migrate.ts';
 import { allowChat, chatConfigured, chatReply, ChatUnconfiguredError, ChatUpstreamError } from './chat.ts';
-import {
-  allowAuthAttempt,
-  clearSessionCookie,
-  hashPassword,
-  parseSessionCookie,
-  sessionCookie,
-  verifyPassword,
-} from './auth.ts';
+import { allowAuthAttempt, clearSessionCookie, parseSessionCookie, sessionCookie } from './auth.ts';
 import { createSession, destroySession, getSession, type Session } from './sessions.ts';
+import { ClerkAuthError, ClerkUnconfiguredError, clerkConfigured, clerkSignUp, clerkVerify } from './clerkAuth.ts';
 
 const app = Fastify({
   logger: true,
@@ -561,19 +555,25 @@ app.post<{ Body: AuthBody }>(
   '/api/auth/signup',
   { schema: { body: authBodySchema } },
   async (req, reply) => {
+    if (!clerkConfigured()) return reply.code(503).send(fail('auth_unconfigured', 'CLERK_SECRET_KEY is not set'));
     if (!allowAuthAttempt(req.ip)) {
       return reply.code(429).send(fail('rate_limited', 'too many attempts, slow down'));
     }
     const email = req.body.email.trim().toLowerCase();
-    const { rowCount } = await pool.query('SELECT 1 FROM users WHERE email = $1', [email]);
-    if (rowCount) {
-      return reply.code(409).send(fail('email_taken', 'an account with that email already exists'));
+    try {
+      await clerkSignUp(email, req.body.password);
+    } catch (err) {
+      if (err instanceof ClerkUnconfiguredError) {
+        req.log.error({ err }, 'Clerk rejected our secret key');
+        return reply.code(503).send(fail('auth_unconfigured', 'auth is misconfigured on this deployment'));
+      }
+      if (err instanceof ClerkAuthError) {
+        const status = err.code === 'email_taken' ? 409 : 422;
+        return reply.code(status).send(fail(err.code, err.message));
+      }
+      throw err;
     }
 
-    await pool.query(
-      'INSERT INTO users (email, password_hash) VALUES ($1, $2)',
-      [email, hashPassword(req.body.password)],
-    );
     const { token, expiresAt } = await createSession(email);
     reply.header('set-cookie', sessionCookie(token, expiresAt, isSecureRequest(req)));
     return reply.code(201).send({ email });
@@ -584,15 +584,22 @@ app.post<{ Body: AuthBody }>(
   '/api/auth/login',
   { schema: { body: authBodySchema } },
   async (req, reply) => {
+    if (!clerkConfigured()) return reply.code(503).send(fail('auth_unconfigured', 'CLERK_SECRET_KEY is not set'));
     if (!allowAuthAttempt(req.ip)) {
       return reply.code(429).send(fail('rate_limited', 'too many attempts, slow down'));
     }
     const email = req.body.email.trim().toLowerCase();
-    const { rows } = await pool.query<{ password_hash: string }>(
-      'SELECT password_hash FROM users WHERE email = $1',
-      [email],
-    );
-    if (!rows[0] || !verifyPassword(req.body.password, rows[0].password_hash)) {
+    let verified: boolean;
+    try {
+      verified = await clerkVerify(email, req.body.password);
+    } catch (err) {
+      if (err instanceof ClerkUnconfiguredError) {
+        req.log.error({ err }, 'Clerk rejected our secret key');
+        return reply.code(503).send(fail('auth_unconfigured', 'auth is misconfigured on this deployment'));
+      }
+      throw err;
+    }
+    if (!verified) {
       // Same message either way: it should not be possible to tell a wrong password
       // from an email that was never registered.
       return reply.code(401).send(fail('invalid_credentials', 'invalid email or password'));
