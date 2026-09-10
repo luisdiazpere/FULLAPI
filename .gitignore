@@ -7,3 +7,14 @@ node_modules
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Issue tracking stays local: bd init generated all of this and committed it
+# on our behalf, including agent instructions and a SessionStart hook. Keep the
+# tickets on this machine rather than shipping tracker wiring to the repo.
+.beads/
+.agents/
+.codex/
+.cursor/
+.claude/settings.json
+AGENTS.md
+CLAUDE.md
