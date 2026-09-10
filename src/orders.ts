@@ -19,13 +19,24 @@ export type OrderRow = {
   updated_at: Date;
 };
 
-/** True if this event id was already processed — the webhook should no-op. */
+/**
+ * Claims this event id, atomically, so concurrent deliveries of the same
+ * event can't both proceed — true if some other delivery already holds the
+ * claim and this one should no-op. A handler that then fails must call
+ * releaseProcessed() so a retry is allowed to redo the work; only a handler
+ * that finishes should leave the claim standing.
+ */
 export async function alreadyProcessed(eventId: string, source: string): Promise<boolean> {
   const { rowCount } = await pool.query(
     'INSERT INTO processed_webhook_events (id, source) VALUES ($1, $2) ON CONFLICT DO NOTHING',
     [eventId, source],
   );
   return rowCount === 0;
+}
+
+/** Undoes alreadyProcessed()'s claim after a failed handler, so the next retry redoes the work. */
+export async function releaseProcessed(eventId: string): Promise<void> {
+  await pool.query('DELETE FROM processed_webhook_events WHERE id = $1', [eventId]);
 }
 
 export async function getOrder(sessionId: string): Promise<OrderRow | null> {

@@ -11,6 +11,7 @@ import {
   markShippingEmailSent,
   recordPayment,
   recordShipment,
+  releaseProcessed,
 } from './orders.ts';
 import { mapShippoStatus } from './shippingStatus.ts';
 import { sendPaymentConfirmation, sendShippingStatusEmail } from './email.ts';
@@ -54,7 +55,14 @@ export default async function webhooks(app: FastifyInstance) {
     }
 
     if (event.type === 'checkout.session.completed') {
-      await handleCheckoutCompleted((event.data.object as Stripe.Checkout.Session).id, req.log);
+      try {
+        await handleCheckoutCompleted((event.data.object as Stripe.Checkout.Session).id, req.log);
+      } catch (err) {
+        // The claim above already committed; release it so Stripe's retry of this
+        // same event id redoes the work instead of hitting {duplicate:true} forever.
+        await releaseProcessed(event.id);
+        throw err;
+      }
     }
 
     return reply.code(200).send({ received: true });
@@ -80,7 +88,12 @@ export default async function webhooks(app: FastifyInstance) {
     }
 
     if (payload.event === 'track_updated' && sessionId && rawStatus) {
-      await handleTrackingUpdate(sessionId, rawStatus, req.log);
+      try {
+        await handleTrackingUpdate(sessionId, rawStatus, req.log);
+      } catch (err) {
+        await releaseProcessed(eventId);
+        throw err;
+      }
     }
 
     return reply.code(200).send({ received: true });
