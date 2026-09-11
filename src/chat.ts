@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildServer } from './mcp/tools.ts';
+import type { ShopCall } from './mcp/call.ts';
 import { makeRateLimiter } from './rateLimit.ts';
 
 export class ChatUnconfiguredError extends Error {}
@@ -61,15 +62,23 @@ async function callDeepSeek(
 
 /**
  * Wires the assistant to the shop's own MCP tools (src/mcp/tools.ts) over an
- * in-memory transport — same tools an external MCP client like Claude Desktop
- * gets, just linked in-process so this needs no extra port or service.
+ * in-memory transport. This is now the only way those tools are reachable: the stdio
+ * and HTTP MCP servers were removed when /api/* was closed to everything but the
+ * frontend, since an external client could no longer call the shop anyway.
+ *
+ * `deps.call` is how a tool talks to the shop, and it carries the caller's own cookie,
+ * so the assistant can never see or do more than the shopper it is answering.
  */
-export async function chatReply(message: string, history: ChatMessage[]): Promise<string> {
+export async function chatReply(
+  message: string,
+  history: ChatMessage[],
+  deps: { call: ShopCall; email?: string },
+): Promise<string> {
   const key = process.env.DEEPSEEK_API_KEY;
   if (!key) throw new ChatUnconfiguredError('DEEPSEEK_API_KEY is not set');
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const mcp = buildServer();
+  const mcp = buildServer(deps);
   const client = new Client({ name: 'bandera-chat', version: '0.1.0' });
   await mcp.connect(serverTransport);
   await client.connect(clientTransport);

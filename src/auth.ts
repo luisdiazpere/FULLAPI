@@ -26,5 +26,26 @@ export function clearSessionCookie(secure: boolean): string {
   return [`${COOKIE_NAME}=`, ...cookieAttrs(secure), 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'].join('; ');
 }
 
+/**
+ * The CSRF half of the double submit. Deliberately NOT HttpOnly: the page has to read
+ * it to echo it back in a header, and that is the whole mechanism — another origin can
+ * neither read this cookie nor set that header.
+ */
+const csrfAttrs = (secure: boolean) => {
+  const attrs = ['Path=/', 'SameSite=Lax'];
+  if (secure) attrs.push('Secure');
+  return attrs;
+};
+
+export function csrfCookie(value: string, expiresAt: Date, secure: boolean): string {
+  return [`${CSRF_COOKIE}=${value}`, ...csrfAttrs(secure), `Expires=${expiresAt.toUTCString()}`].join('; ');
+}
+
+export function clearCsrfCookie(secure: boolean): string {
+  return [`${CSRF_COOKIE}=`, ...csrfAttrs(secure), 'Expires=Thu, 01 Jan 1970 00:00:00 GMT'].join('; ');
+}
+
+const CSRF_COOKIE = 'csrf';
+
 /** Shared by signup and login: a few wrong guesses is normal, hundreds is an attack. */
 export const allowAuthAttempt = makeRateLimiter(10, 60_000);

@@ -497,11 +497,26 @@ function make(tag, props, ...children) {
   return node;
 }
 
+/**
+ * The CSRF half of the double submit. The `csrf` cookie is deliberately readable by
+ * this script — echoing it back in a header is the mechanism: another origin can
+ * neither read the cookie nor set the header. See src/perimeter.ts.
+ */
+const csrfToken = () =>
+  document.cookie.split('; ').find((c) => c.startsWith('csrf='))?.slice('csrf='.length) ?? '';
+
+const jsonPost = (body) => ({
+  method: 'POST',
+  headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken() },
+  body: JSON.stringify(body),
+});
+
 async function api(path) {
   const res = await fetch(path);
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     const err = new Error(body?.error?.message ?? `request failed (${res.status})`);
+    err.status = res.status;
     err.outage = res.status >= 500;
     throw err;
   }
@@ -671,11 +686,7 @@ $googleOpen.addEventListener('click', async () => {
 async function exchangeClerkSession(clerk) {
   const token = await clerk.session?.getToken();
   if (!token) throw new Error('Clerk session produced no token');
-  const res = await fetch('/api/auth/google-callback', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionToken: token }),
-  });
+  const res = await fetch('/api/auth/google-callback', jsonPost({ sessionToken: token }));
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     $accountError.textContent = body?.error?.message ?? 'Google sign-in failed. Try again.';
@@ -715,7 +726,7 @@ async function completeGoogleSignIn() {
 }
 
 async function logout() {
-  await fetch('/api/auth/logout', { method: 'POST' });
+  await fetch('/api/auth/logout', { method: 'POST', headers: { 'x-csrf-token': csrfToken() } });
   session = null;
   $accountError.textContent = '';   // don't carry an old failure into the next visit
   accountSetOpen(false);
@@ -735,11 +746,10 @@ $accountForm.addEventListener('submit', async (e) => {
   $accountError.textContent = '';
   $accountSubmit.disabled = true;
   try {
-    const res = await fetch(`/api/auth/${authMode}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: $accountEmail.value.trim(), password: $accountPassword.value }),
-    });
+    const res = await fetch(`/api/auth/${authMode}`, jsonPost({
+      email: $accountEmail.value.trim(),
+      password: $accountPassword.value,
+    }));
     const body = await res.json().catch(() => null);
     if (!res.ok) {
       $accountError.textContent = body?.error?.message ?? 'Something went wrong. Try again.';
@@ -889,13 +899,9 @@ async function payFor(button) {
   button.textContent = 'Opening checkout…';
   cartError = '';
   try {
-    const res = await fetch('/api/checkout', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        items: cart.map(({ sku, code, quantity }) => ({ kitSku: sku, countryCode: code, quantity })),
-      }),
-    });
+    const res = await fetch('/api/checkout', jsonPost({
+      items: cart.map(({ sku, code, quantity }) => ({ kitSku: sku, countryCode: code, quantity })),
+    }));
     const body = await res.json().catch(() => null);
     if (!res.ok) {
       const sku = body?.error?.details?.kitSku;
@@ -1015,11 +1021,7 @@ const OPENERS = [
 const chatHistory = [];
 
 async function answer(question) {
-  const res = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message: question, history: chatHistory.slice(-10) }),
-  });
+  const res = await fetch('/api/chat', jsonPost({ message: question, history: chatHistory.slice(-10) }));
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     if (body?.error?.code === 'chat_unconfigured') {
@@ -1156,6 +1158,20 @@ async function confirmation() {
   try {
     $grid.replaceChildren(receipt(await api(`/api/checkout/${encodeURIComponent(id)}`)));
   } catch (err) {
+    // A receipt is only readable by the account that bought it, so finishing payment
+    // in a different browser than you started in lands here. Saying "we could not
+    // find that order" would be a lie that sends a paying customer to support.
+    if (err.status === 401) {
+      const loginButton = make('button', { className: 'primary', textContent: 'Log in' });
+      loginButton.addEventListener('click', () => accountSetOpen(true));
+      $grid.replaceChildren(make('div', { className: 'panel' },
+        make('div', { className: 'big', textContent: '🧾' }),
+        make('h2', { textContent: 'Log in to see this receipt' }),
+        make('p', { textContent: 'Your payment went through. Receipts are only shown to the account that placed the order — it will be waiting under Your account.' }),
+        loginButton,
+      ));
+      return;
+    }
     $grid.replaceChildren(make('div', { className: 'panel' },
       make('div', { className: 'big', textContent: '🧾' }),
       make('h2', { textContent: 'We could not find that order' }),

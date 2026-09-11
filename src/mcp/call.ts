@@ -1,8 +1,14 @@
-const BASE = (process.env.SHOP_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3000}`).replace(/\/+$/, '');
-
-// Longer than the shop's own 10s upstream budget (src/countries.ts:62): one call
-// here can fan out to REST Countries, Postgres and Stripe.
-const TIMEOUT_MS = 20_000;
+/**
+ * How a tool reaches the shop.
+ *
+ * This used to be a fetch() to the shop's own HTTP API, which meant the server called
+ * itself over the network — and that stopped working the moment /api/* was closed to
+ * everything but the frontend (src/perimeter.ts). Rather than punch an internal hole
+ * through that wall, the caller is now injected: the chat supplies an in-process one
+ * built on app.inject(), and there is no other transport. Deleting the stdio and HTTP
+ * MCP servers is what makes that safe to assume.
+ */
+export type ShopCall = <T>(path: string, init?: { method?: string; body?: unknown }) => Promise<T>;
 
 export class ShopError extends Error {
   // Fields are declared, not constructor parameters: erasableSyntaxOnly forbids
@@ -18,36 +24,6 @@ export class ShopError extends Error {
     this.details = details;
   }
 }
-
-type ErrorBody = { error?: { code?: string; message?: string; details?: unknown } };
-
-export async function shop<T>(path: string): Promise<T>;
-export async function shop<T>(path: string, init: RequestInit): Promise<T>;
-export async function shop<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  }).catch((cause: unknown) => {
-    throw new ShopError(0, 'shop_unreachable', `cannot reach the shop at ${BASE}`, { cause: String(cause) });
-  });
-
-  const body = (await res.json().catch(() => null)) as (ErrorBody & T) | null;
-  if (!res.ok) {
-    throw new ShopError(
-      res.status,
-      body?.error?.code ?? 'http_error',
-      body?.error?.message ?? `the shop returned ${res.status}`,
-      body?.error?.details,
-    );
-  }
-  return body as T;
-}
-
-export const postJson = (body: unknown): RequestInit => ({
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify(body),
-});
 
 const detail = (details: unknown, key: string): unknown =>
   details && typeof details === 'object' ? (details as Record<string, unknown>)[key] : undefined;

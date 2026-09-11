@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { holdPlan } from '../cart.ts';
 import type { Country } from '../countries.ts';
 import { findCountryInText, matchCountry } from '../match.ts';
-import { shop, postJson, toolError } from './shop.ts';
+import { toolError, type ShopCall } from './call.ts';
 
 const COUNTRY_CODE = z.string().regex(/^[A-Za-z]{2,3}$/, 'alpha-2 or alpha-3 country code');
 const KIT_SKU = z.string().regex(/^[a-z0-9-]{1,64}$/, 'kit sku');
@@ -43,7 +43,7 @@ const failed = (err: unknown) => ({
 
 /** The catalogue is 250 rows and changes daily at most; refetching it per tool call is waste. */
 let countryCache: { at: number; rows: Country[] } | null = null;
-async function countries(): Promise<Country[]> {
+async function countries(shop: ShopCall): Promise<Country[]> {
   if (countryCache && Date.now() - countryCache.at < 60 * 60 * 1000) return countryCache.rows;
   const rows = await shop<Country[]>('/api/countries');
   countryCache = { at: Date.now(), rows };
@@ -55,7 +55,10 @@ const firstSentence = (text: string): string => {
   return cut && cut.length < text.length ? cut : text;
 };
 
-export function buildServer(): McpServer {
+export function buildServer(deps: { call: ShopCall; email?: string }): McpServer {
+  // Every tool below already speaks this shape; only the transport underneath changed.
+  const shop = deps.call;
+
   const server = new McpServer(
     { name: 'bandera-y-sello', version: '0.1.0' },
     {
@@ -83,7 +86,7 @@ export function buildServer(): McpServer {
     },
     async ({ query }) => {
       try {
-        const { exact, candidates } = matchCountry(query, await countries());
+        const { exact, candidates } = matchCountry(query, await countries(shop));
         if (exact) return json({ found: true, ...exact });
         if (candidates.length) {
           return json({
@@ -199,7 +202,7 @@ export function buildServer(): McpServer {
     },
     async ({ query, maxUnitAmount, inStockOnly, limit }) => {
       try {
-        const exact = findCountryInText(query, await countries());
+        const exact = findCountryInText(query, await countries(shop));
         const kits = exact
           ? await shop<KitRow[]>(`/api/kits?country=${encodeURIComponent(exact.code)}`)
           : await shop<KitRow[]>('/api/kits');
@@ -378,7 +381,7 @@ export function buildServer(): McpServer {
           amountTotal: number;
           currency: string;
           items: { kitSku: string; countryCode: string; quantity: number; name: string }[];
-        }>('/api/checkout', postJson({ items }));
+        }>('/api/checkout', { method: 'POST', body: { items } });
         return json({
           sessionId: created.sessionId,
           url: created.url,

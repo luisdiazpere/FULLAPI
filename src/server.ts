@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyError, type FastifyRequest } from 'fastify';
 import Stripe from 'stripe';
 import { env } from './env.ts';
@@ -18,7 +19,16 @@ import webhooks from './webhooks.ts';
 import clerkWebhook from './clerkWebhook.ts';
 import { runMigrations } from './migrate.ts';
 import { allowChat, chatConfigured, chatReply, ChatUnconfiguredError, ChatUpstreamError } from './chat.ts';
-import { allowAuthAttempt, clearSessionCookie, parseSessionCookie, sessionCookie } from './auth.ts';
+import {
+  allowAuthAttempt,
+  clearCsrfCookie,
+  clearSessionCookie,
+  csrfCookie,
+  parseSessionCookie,
+  sessionCookie,
+} from './auth.ts';
+import perimeter, { csrfFor, internalHeaders } from './perimeter.ts';
+import { ShopError, type ShopCall } from './mcp/call.ts';
 import { createSession, destroySession, getSession, type Session } from './sessions.ts';
 import {
   ClerkAuthError,
@@ -29,15 +39,30 @@ import {
   clerkVerify,
 } from './clerkAuth.ts';
 
-const app = Fastify({
+export const app = Fastify({
   logger: true,
   bodyLimit: 16 * 1024,
+  // Trust exactly one hop: Render's edge, which is always the immediate peer.
+  // Without this, req.ip is the edge's address and every visitor shares one rate-limit
+  // bucket, and req.protocol never says https so the session cookie loses Secure.
+  //
+  // Not `true`: that walks the whole X-Forwarded-For chain, and the client writes the
+  // left of it, so req.ip becomes attacker-chosen. Not the number 1 either — Fastify
+  // reads a numeric trustProxy as "trust nothing" and fails closed (lib/request.js:51),
+  // so it would look like this line works while changing nothing.
+  trustProxy: (_address, hop) => hop === 0,
   // Fastify's ajv defaults to removeAdditional:true, which silently drops unknown
   // body fields. At a trust boundary we'd rather say no than quietly accept.
   ajv: { customOptions: { removeAdditional: false } },
 });
 await app.register(webhooks);
 await app.register(clerkWebhook);
+
+// Called, not registered: register() would encapsulate the hook into a child context
+// with no routes in it. Called here it lands on the root and covers every route defined
+// below. Order matters — the two webhook plugins above already have their own context,
+// so they stay exempt, which is what we want: Stripe and Clerk are not the frontend.
+await perimeter(app);
 
 const MAX_LINES = 20;
 const NAME_MAX = 250;
@@ -52,6 +77,38 @@ const sessionIdSchema = { type: 'string', pattern: '^cs_[A-Za-z0-9_]{10,200}$' }
 const kitSkuSchema = { type: 'string', pattern: '^[a-z0-9-]{1,64}$' } as const;
 const emailSchema = { type: 'string', format: 'email', maxLength: 200 } as const;
 const passwordSchema = { type: 'string', minLength: 8, maxLength: 200 } as const;
+
+/**
+ * How the chat's tools reach the shop, now that /api/* is closed to everything but the
+ * page. app.inject() is a function call, not a socket — nothing off the network can
+ * reach it — so stamping the same-origin markers here is not a hole an attacker can
+ * use, it is how an in-process caller identifies itself. It carries the shopper's own
+ * cookie, so every route still authorizes them exactly as it would over the wire.
+ */
+const internalCall =
+  (cookie?: string): ShopCall =>
+  async <T,>(path: string, init?: { method?: string; body?: unknown }): Promise<T> => {
+    const res = await app.inject({
+      method: (init?.method ?? 'GET') as 'GET' | 'POST',
+      url: path,
+      headers: {
+        ...internalHeaders(cookie),
+        ...(init?.body ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(init?.body ? { payload: init.body as object } : {}),
+    });
+
+    const body = res.json<(T & { error?: { code?: string; message?: string; details?: unknown } }) | null>();
+    if (res.statusCode >= 400) {
+      throw new ShopError(
+        res.statusCode,
+        body?.error?.code ?? 'http_error',
+        body?.error?.message ?? `the shop returned ${res.statusCode}`,
+        body?.error?.details,
+      );
+    }
+    return body as T;
+  };
 
 /** Reads and validates the session cookie; null if there is none or it is stale. */
 async function currentSession(req: { headers: { cookie?: string } }): Promise<Session | null> {
@@ -518,7 +575,18 @@ app.post<{ Body: CheckoutBody }>(
   },
 );
 
-/** Backs the post-payment confirmation. Session ids are unguessable, so the id is the key. */
+/**
+ * Backs the post-payment confirmation.
+ *
+ * The id used to be the only key, on the grounds that it is unguessable. It isn't a
+ * secret though: it rides in the /success?session_id= URL, so it lands in history,
+ * referrers and screenshots, and it is inside every confirmation email. Anyone holding
+ * one read the buyer's email address off this route — and because /api/chat is open to
+ * anonymous visitors, they could get the shop's own assistant to read it for them.
+ *
+ * A non-owner gets the same 404 as a nonexistent session, so this never confirms that
+ * an id is real.
+ */
 app.get<{ Params: { sessionId: string } }>(
   '/api/checkout/:sessionId',
   {
@@ -527,8 +595,16 @@ app.get<{ Params: { sessionId: string } }>(
     },
   },
   async (req, reply) => {
+    const me = await currentSession(req);
+    if (!me) return reply.code(401).send(fail('auth_required', 'log in to view this order'));
     try {
       const session = await loadSession(req.params.sessionId);
+      // customer_email is what we set from the logged-in account at creation, so it is
+      // present even before payment completes; customer_details fills in later.
+      const owner = session.session.customer_email ?? session.email;
+      if (owner?.toLowerCase() !== me.email.toLowerCase()) {
+        return reply.code(404).send(fail('session_not_found', 'no checkout session with that id'));
+      }
       return {
         status: session.status,
         paymentStatus: session.paymentStatus,
@@ -547,9 +623,12 @@ app.get<{ Params: { sessionId: string } }>(
   },
 );
 
-/** Render terminates TLS at its edge and forwards plain HTTP, so req.protocol alone would say http. */
-const isSecureRequest = (req: FastifyRequest): boolean =>
-  req.headers['x-forwarded-proto'] === 'https' || req.protocol === 'https';
+/**
+ * Render terminates TLS at its edge and forwards plain HTTP. With trustProxy set,
+ * Fastify derives req.protocol from the forwarded header itself — reading that header
+ * by hand here would take it from any client, secure or not.
+ */
+const isSecureRequest = (req: FastifyRequest): boolean => req.protocol === 'https';
 
 type AuthBody = { email: string; password: string };
 
@@ -584,7 +663,10 @@ app.post<{ Body: AuthBody }>(
     }
 
     const { token, expiresAt } = await createSession(email);
-    reply.header('set-cookie', sessionCookie(token, expiresAt, isSecureRequest(req)));
+    reply.header('set-cookie', [
+      sessionCookie(token, expiresAt, isSecureRequest(req)),
+      csrfCookie(csrfFor(token), expiresAt, isSecureRequest(req)),
+    ]);
     return reply.code(201).send({ email });
   },
 );
@@ -614,7 +696,10 @@ app.post<{ Body: AuthBody }>(
       return reply.code(401).send(fail('invalid_credentials', 'invalid email or password'));
     }
     const { token, expiresAt } = await createSession(email);
-    reply.header('set-cookie', sessionCookie(token, expiresAt, isSecureRequest(req)));
+    reply.header('set-cookie', [
+      sessionCookie(token, expiresAt, isSecureRequest(req)),
+      csrfCookie(csrfFor(token), expiresAt, isSecureRequest(req)),
+    ]);
     return { email };
   },
 );
@@ -652,7 +737,10 @@ app.post<{ Body: GoogleCallbackBody }>(
       throw err;
     }
     const { token, expiresAt } = await createSession(email);
-    reply.header('set-cookie', sessionCookie(token, expiresAt, isSecureRequest(req)));
+    reply.header('set-cookie', [
+      sessionCookie(token, expiresAt, isSecureRequest(req)),
+      csrfCookie(csrfFor(token), expiresAt, isSecureRequest(req)),
+    ]);
     return reply.code(200).send({ email });
   },
 );
@@ -660,13 +748,28 @@ app.post<{ Body: GoogleCallbackBody }>(
 app.post('/api/auth/logout', async (req, reply) => {
   const token = parseSessionCookie(req.headers.cookie);
   if (token) await destroySession(token);
-  reply.header('set-cookie', clearSessionCookie(isSecureRequest(req)));
+  reply.header('set-cookie', [
+    clearSessionCookie(isSecureRequest(req)),
+    clearCsrfCookie(isSecureRequest(req)),
+  ]);
   return { ok: true };
 });
 
 app.get('/api/auth/me', async (req, reply) => {
   const session = await currentSession(req);
   if (!session) return reply.code(401).send(fail('not_logged_in', 'not logged in'));
+
+  // Re-issue the CSRF cookie for anyone whose session predates it. Sessions last 30
+  // days, so without this every already-logged-in shopper would hit a 403 on their
+  // next checkout and have to work out that logging out fixes it. The page calls this
+  // on boot, so the repair happens before they can click anything.
+  const token = parseSessionCookie(req.headers.cookie);
+  if (token) {
+    reply.header(
+      'set-cookie',
+      csrfCookie(csrfFor(token), new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), isSecureRequest(req)),
+    );
+  }
   return session;
 });
 
@@ -745,7 +848,13 @@ app.post<{ Body: ChatBody }>(
     }
 
     try {
-      const text = await chatReply(req.body.message, req.body.history ?? []);
+      // The assistant acts as whoever is chatting: anonymous callers get the read-only
+      // tools, and a logged-in one gets the rest, scoped to their own account by the
+      // very same routes the page uses.
+      const text = await chatReply(req.body.message, req.body.history ?? [], {
+        call: internalCall(req.headers.cookie),
+        email: (await currentSession(req))?.email,
+      });
       return { reply: text };
     } catch (err) {
       if (err instanceof ChatUnconfiguredError) {
@@ -786,7 +895,11 @@ app.setErrorHandler((err: FastifyError, _req, reply) => {
 
 await runMigrations();
 
-app.listen({ port: env.PORT, host: '0.0.0.0' }).catch((err) => {
-  app.log.error(err);
-  process.exit(1);
-});
+// Only listen when run as the entrypoint. Importing this module used to bind a port,
+// which is why no route could be covered by a test.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  app.listen({ port: env.PORT, host: '0.0.0.0' }).catch((err) => {
+    app.log.error(err);
+    process.exit(1);
+  });
+}
