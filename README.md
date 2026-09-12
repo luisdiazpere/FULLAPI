@@ -10,7 +10,7 @@ Nothing about a country is stored or hardcoded. Kits store only templates.
 ## Run
 
 ```bash
-docker compose up -d          # Postgres on :5433, seeded from db/init.sql
+docker compose up -d          # Postgres on :5433 (seeded from db/init.sql), Valkey on :6380
 cp .env.example .env          # then fill in the two API keys
 npm install
 npm start                     # :3000
@@ -43,8 +43,68 @@ touching either file.
 | GET | `/api/souvenirs?country=JPN` | Same, narrowed to one country. Backs the filter |
 | GET | `/api/checkout/:sessionId` | Payment status and every purchased line. Backs the confirmation page |
 | POST | `/api/checkout` | `{ items: [{ kitSku, countryCode, quantity? }] }`, 1..20 lines -> 201 with the Stripe Checkout URL |
-| POST | `/api/webhooks/stripe` | Stripe webhook. On `checkout.session.completed`: records the order, emails a payment confirmation, buys a shipping label |
+| POST | `/api/webhooks/stripe` | Stripe webhook. On `checkout.session.completed`: records the order, then queues the confirmation email and the shipping label |
 | POST | `/api/webhooks/shippo` | Shippo tracking webhook (`?token=` required). Emails a delivery-status update on each carrier status change |
+
+### The API only answers its own page
+
+`/api/*` is closed to everything except the shop's frontend: reads need
+`Sec-Fetch-Site: same-origin`, and writes need an allow-listed `Origin` plus a
+session-bound CSRF token (`X-CSRF-Token`, echoing the readable `csrf` cookie).
+`curl https://.../api/kits` is a 403, and that is the point.
+
+Be clear about what that buys. It stops another site driving this API with a
+logged-in visitor's cookie — which was wide open, since `SameSite=Lax` was the
+only control. It does **not** stop a scripted client: `Sec-Fetch-Site` is only
+unforgeable by browser JavaScript. Automation is bounded by rate limits, not by
+this. Nothing served to a browser can prove a request came from its own page.
+
+Webhooks are exempt (Stripe and Clerk are not the frontend; they are gated by
+signatures instead), as are the three HTML page routes and `/health`.
+
+One cost worth knowing: Safari below 16.4 does not send `Sec-Fetch-Site` and so
+cannot use the API at all.
+
+## Queue (BullMQ) and the /admin surface
+
+The Stripe webhook used to send the confirmation email and buy the shipping
+label inline. Both had already failed in production — the email timed out
+against a blocked SMTP port and took the handler down for 120s, the label threw
+because a carrier had no rate to that country — and neither is something Stripe
+can fix by retrying. Recording the payment is still synchronous, so an order can
+never be lost to a queue; everything after it is a job with five attempts and
+exponential backoff.
+
+With no `REDIS_URL` the work runs inline exactly as before. A missing queue must
+never cost a sale, and it keeps `npm test` free of Redis.
+
+| Surface | Where | Auth |
+|---|---|---|
+| Dashboard | `/admin/queues/ui/` (trailing slash; without it you get a 301) | Basic — any username, `ADMIN_TOKEN` as the password |
+| JSON API | `/admin/queues/*` | `Authorization: Bearer $ADMIN_TOKEN` |
+
+`/admin` is deliberately **not** under `/api`, because that prefix is closed to
+everything but the browser and this is a surface you drive from Postman. One rule
+per surface, neither weakening the other. `postman/bandera-queues.postman_collection.json`
+drives all of it — set `baseUrl` and `adminToken`, or run it headless:
+
+```bash
+npx newman run postman/bandera-queues.postman_collection.json \
+  --env-var baseUrl=http://localhost:3000 --env-var adminToken=$ADMIN_TOKEN
+```
+
+| Method | Path | Notes |
+| ------ | ---- | ----- |
+| GET | `/admin/queues/health` | Answers even with no Redis, so it tells you whether the queue is configured at all |
+| GET | `/admin/queues/stats` | Job counts and paused state per queue |
+| GET | `/admin/queues/:name/jobs?state=&limit=` | `active`\|`waiting`\|`delayed`\|`completed`\|`failed` |
+| POST | `/admin/queues/:name/jobs` | `{ jobName, data?, delayMs? }` -> 201 with the job id |
+| POST | `/admin/queues/:name/jobs/:id/retry` | 409 with the actual state if the job is not finished |
+| DELETE | `/admin/queues/:name/jobs/:id` | 409 if the worker currently holds a lock on it |
+
+The Key Value instance **must** run `maxmemory-policy=noeviction`. Any `allkeys-*`
+policy silently evicts live job data, which looks exactly like jobs vanishing for
+no reason.
 
 ## Status codes
 
@@ -118,13 +178,17 @@ and logged (Brevo creds), same as `SHIPPO_API_KEY` being optional today.
 
 ## Known shortcuts
 
-Grep for `ponytail:` comments — seven today. The one that actually costs money:
+Grep for `ponytail:` comments — eight today. The one that actually costs money:
 checkout holds stock the moment the Stripe session is created and nothing
 releases it, so every abandoned cart leaks up to 20 lines of stock until someone
 puts them back by hand. There is no `checkout.session.expired` webhook yet.
 
 The rest are bounded: the country catalog and the chat rate limiter are both
-in-process (fine while this is one instance, wrong the moment it is two),
+in-process (fine while this is one instance, wrong the moment it is two), the
+queue worker shares the web process because Render has no background-worker
+service on the free tier — and a free web service hibernates, so nothing drains
+the queue while the app is asleep and free Key Value loses everything queued on
+restart,
 `src/parcel.ts` stacks a box without bin packing and reads a static zone table
 rather than the carrier's coverage API, `src/match.ts` does prefix and substring
 matching only so a typo finds nothing, and `src/clerkWebhook.ts` deliberately
