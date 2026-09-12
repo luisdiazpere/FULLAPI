@@ -4,6 +4,7 @@ import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { FastifyAdapter } from '@bull-board/fastify';
 import { QUEUE_NAMES, enqueue, queue, queueConfigured, type QueueName } from './queue.ts';
+import type { EmailJob, ShippingJob } from './jobs.ts';
 
 /**
  * The ops surface: a queue dashboard for humans and a JSON API for Postman.
@@ -129,32 +130,111 @@ export default async function adminRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Params: { name: string }; Body: { jobName: string; data?: unknown; delayMs?: number } }>(
-    '/admin/queues/:name/jobs',
+  // ---- The app's operations, one endpoint each ----
+  //
+  // These replaced a generic {jobName, data} passthrough. That accepted any shape at
+  // all and only failed later, inside the worker, where the caller never saw it — so
+  // a typo in a job payload looked like a successful enqueue. Each operation the app
+  // actually performs is now its own validated endpoint, and the queue it lands on is
+  // a property of the operation rather than something the caller picks.
+
+  const SESSION_ID = { type: 'string', pattern: '^cs_[A-Za-z0-9_]{10,200}$' } as const;
+  const EMAIL = { type: 'string', format: 'email', maxLength: 200 } as const;
+  const DELAY = { type: 'integer', minimum: 0, maximum: 86_400_000 } as const;
+
+  const body = (properties: Record<string, unknown>, required: string[]) => ({
+    type: 'object',
+    additionalProperties: false,
+    required,
+    properties: { ...properties, delayMs: DELAY },
+  });
+
+  /** One place that turns a validated request into a queued job, so the four agree. */
+  async function submit(
+    reply: FastifyReply,
+    name: QueueName,
+    job: EmailJob | ShippingJob,
+    delayMs?: number,
+  ) {
+    if (!queueConfigured()) return reply.code(503).send(fail('queue_unconfigured', 'REDIS_URL is not set'));
+    const jobId = await enqueue(name, job.kind, job, delayMs ? { delay: delayMs } : {});
+    return reply.code(202).send({ queue: name, jobId, job: job.kind, status: `/admin/jobs/${name}/${jobId}` });
+  }
+
+  app.post<{ Body: { sessionId: string; delayMs?: number } }>(
+    '/admin/jobs/payment-confirmation',
+    { schema: { body: body({ sessionId: SESSION_ID }, ['sessionId']) } },
+    async (req, reply) =>
+      submit(reply, 'email', { kind: 'payment-confirmation', sessionId: req.body.sessionId }, req.body.delayMs),
+  );
+
+  app.post<{ Body: { to: string; delayMs?: number } }>(
+    '/admin/jobs/welcome',
+    { schema: { body: body({ to: EMAIL }, ['to']) } },
+    async (req, reply) => submit(reply, 'email', { kind: 'welcome', to: req.body.to }, req.body.delayMs),
+  );
+
+  app.post<{ Body: { sessionId: string; to: string; trackingNumber?: string; status: string; delayMs?: number } }>(
+    '/admin/jobs/shipping-status',
     {
       schema: {
-        params: { type: 'object', required: ['name'], properties: { name: { type: 'string', enum: [...QUEUE_NAMES] } } },
-        body: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['jobName'],
-          properties: {
-            jobName: { type: 'string', minLength: 1, maxLength: 64 },
-            data: {},
-            delayMs: { type: 'integer', minimum: 0, maximum: 86_400_000 },
+        body: body(
+          {
+            sessionId: SESSION_ID,
+            to: EMAIL,
+            trackingNumber: { type: 'string', maxLength: 100 },
+            // Exactly the statuses src/email.ts has a template for. Anything else
+            // is silently ignored by the worker, so reject it at the door instead.
+            status: { type: 'string', enum: ['in_transit', 'delivered', 'failed', 'returned'] },
           },
+          ['sessionId', 'to', 'status'],
+        ),
+      },
+    },
+    async (req, reply) =>
+      submit(reply, 'email', {
+        kind: 'shipping-status',
+        sessionId: req.body.sessionId,
+        to: req.body.to,
+        trackingNumber: req.body.trackingNumber ?? null,
+        status: req.body.status,
+      }, req.body.delayMs),
+  );
+
+  app.post<{ Body: { sessionId: string; delayMs?: number } }>(
+    '/admin/jobs/purchase-label',
+    { schema: { body: body({ sessionId: SESSION_ID }, ['sessionId']) } },
+    async (req, reply) =>
+      submit(reply, 'shipping', { kind: 'purchase-label', sessionId: req.body.sessionId }, req.body.delayMs),
+  );
+
+  /** Follow one job by the id the endpoints above hand back. */
+  app.get<{ Params: { queue: string; id: string } }>(
+    '/admin/jobs/:queue/:id',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['queue', 'id'],
+          properties: { queue: { type: 'string', enum: [...QUEUE_NAMES] }, id: { type: 'string', maxLength: 64 } },
         },
       },
     },
     async (req, reply) => {
       if (!queueConfigured()) return reply.code(503).send(fail('queue_unconfigured', 'REDIS_URL is not set'));
-      const jobId = await enqueue(
-        req.params.name as QueueName,
-        req.body.jobName,
-        req.body.data ?? {},
-        req.body.delayMs ? { delay: req.body.delayMs } : {},
-      );
-      return reply.code(201).send({ queue: req.params.name, jobId });
+      const job = await queue(req.params.queue as QueueName)!.getJob(req.params.id);
+      if (!job) return reply.code(404).send(fail('job_not_found', 'no job with that id'));
+      return {
+        queue: req.params.queue,
+        id: job.id,
+        job: job.name,
+        state: await job.getState(),
+        data: job.data,
+        attemptsMade: job.attemptsMade,
+        failedReason: job.failedReason ?? null,
+        processedOn: job.processedOn ?? null,
+        finishedOn: job.finishedOn ?? null,
+      };
     },
   );
 

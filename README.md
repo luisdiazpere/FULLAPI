@@ -93,12 +93,28 @@ npx newman run postman/bandera-queues.postman_collection.json \
   --env-var baseUrl=http://localhost:3000 --env-var adminToken=$ADMIN_TOKEN
 ```
 
+Every operation the app performs is its own endpoint. There is no generic
+"enqueue this blob" route: that accepted any shape and only failed later, inside
+the worker, where the caller never saw it — so a typo looked like a successful
+enqueue. Each body is validated, and the queue a job lands on is a property of
+the operation rather than something the caller picks. All four answer `202` with
+a job id and a `status` URL to follow it.
+
+| Method | Path | Body |
+| ------ | ---- | ---- |
+| POST | `/admin/jobs/payment-confirmation` | `{ sessionId, delayMs? }` |
+| POST | `/admin/jobs/welcome` | `{ to, delayMs? }` |
+| POST | `/admin/jobs/shipping-status` | `{ sessionId, to, status, trackingNumber?, delayMs? }` — `status` is one of `in_transit`, `delivered`, `failed`, `returned` |
+| POST | `/admin/jobs/purchase-label` | `{ sessionId, delayMs? }` |
+| GET | `/admin/jobs/:queue/:id` | Follow one job: state, attempts, failure reason |
+
+And the queue-level view:
+
 | Method | Path | Notes |
 | ------ | ---- | ----- |
 | GET | `/admin/queues/health` | Answers even with no Redis, so it tells you whether the queue is configured at all |
 | GET | `/admin/queues/stats` | Job counts and paused state per queue |
 | GET | `/admin/queues/:name/jobs?state=&limit=` | `active`\|`waiting`\|`delayed`\|`completed`\|`failed` |
-| POST | `/admin/queues/:name/jobs` | `{ jobName, data?, delayMs? }` -> 201 with the job id |
 | POST | `/admin/queues/:name/jobs/:id/retry` | 409 with the actual state if the job is not finished |
 | DELETE | `/admin/queues/:name/jobs/:id` | 409 if the worker currently holds a lock on it |
 

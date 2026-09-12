@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Bandera y Sello \u2014 Queues",
-    "description": "The BullMQ ops surface at /admin.\n\nWhy it is not under /api: that prefix is closed to everything but the shop's own page (Sec-Fetch-Site + Origin + CSRF, see src/perimeter.ts), so Postman gets a 403 there by design. The queue API is gated by a token instead \u2014 set `adminToken` in the collection variables.\n\nThe dashboard for humans is at {{baseUrl}}/admin/queues/ui/ (a browser will prompt for Basic auth: any username, the admin token as the password).",
+    "description": "The BullMQ ops surface at /admin.\n\nEach operation the app performs is its own validated endpoint under /admin/jobs/* \u2014 a bad payload is refused at the door rather than swallowed and failed later inside the worker. /admin/queues/* is the queue-level view: stats, listing, retry, remove.\n\nWhy not under /api: that prefix is closed to everything but the shop's own page (Sec-Fetch-Site + Origin + CSRF, see src/perimeter.ts), so Postman gets a 403 there by design. This surface is gated by a token instead \u2014 set `adminToken`.\n\nDashboard for humans: {{baseUrl}}/admin/queues/ui/ (Basic auth: any username, the admin token as the password).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -34,6 +34,16 @@
       "key": "jobId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "statusUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "polls",
+      "value": "0",
+      "type": "string"
     }
   ],
   "item": [
@@ -52,7 +62,7 @@
             "health"
           ]
         },
-        "description": "Answers even with no REDIS_URL, so it tells you whether the queue is configured at all rather than just failing."
+        "description": "Answers even with no REDIS_URL, so it reports whether the queue is configured rather than just failing."
       },
       "event": [
         {
@@ -62,8 +72,8 @@
             "exec": [
               "pm.test('200', () => pm.response.to.have.status(200));",
               "const b = pm.response.json();",
-              "pm.test('reports queue names', () => pm.expect(b.queues).to.include.members(['email', 'shipping']));",
-              "if (!b.configured) console.warn('REDIS_URL is not set \u2014 jobs will run inline instead of being queued.');"
+              "pm.test('reports queue names', () => pm.expect(b.queues).to.include.members(['email','shipping']));",
+              "if (!b.configured) console.warn('REDIS_URL unset \u2014 work runs inline instead of queued.');"
             ]
           }
         }
@@ -72,9 +82,6 @@
     {
       "name": "Auth \u2014 no token is refused",
       "request": {
-        "auth": {
-          "type": "noauth"
-        },
         "method": "GET",
         "url": {
           "raw": "{{baseUrl}}/admin/queues/stats",
@@ -87,7 +94,10 @@
             "stats"
           ]
         },
-        "description": "The whole /admin surface is token-gated. This must never return data."
+        "description": "The whole /admin surface is token-gated. This must never return data.",
+        "auth": {
+          "type": "noauth"
+        }
       },
       "event": [
         {
@@ -116,7 +126,8 @@
             "queues",
             "stats"
           ]
-        }
+        },
+        "description": ""
       },
       "event": [
         {
@@ -134,9 +145,21 @@
       ]
     },
     {
-      "name": "Enqueue \u2014 welcome email",
+      "name": "Job \u2014 welcome email",
       "request": {
         "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/admin/jobs/welcome",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "jobs",
+            "welcome"
+          ]
+        },
+        "description": "One endpoint per operation the app actually performs. The queue it lands on is a property of the operation, not something you pick.",
         "header": [
           {
             "key": "Content-Type",
@@ -145,21 +168,8 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"jobName\": \"welcome\",\n  \"data\": { \"kind\": \"welcome\", \"to\": \"postman@example.invalid\" }\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/admin/queues/email/jobs",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "admin",
-            "queues",
-            "email",
-            "jobs"
-          ]
-        },
-        "description": "Saves the returned jobId into the {{jobId}} variable for the requests below."
+          "raw": "{\n  \"to\": \"postman@example.invalid\"\n}"
+        }
       },
       "event": [
         {
@@ -167,20 +177,35 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('201', () => pm.response.to.have.status(201));",
+              "pm.test('202 accepted', () => pm.response.to.have.status(202));",
               "const b = pm.response.json();",
+              "pm.test('lands on the email queue', () => pm.expect(b.queue).to.eql('email'));",
               "pm.test('returns a job id', () => pm.expect(b.jobId).to.be.a('string'));",
-              "pm.collectionVariables.set('jobId', b.jobId);",
-              "pm.collectionVariables.set('queue', 'email');"
+              "pm.test('tells you where to follow it', () => pm.expect(b.status).to.be.a('string'));",
+              "pm.collectionVariables.set('statusUrl', b.status);",
+              "pm.collectionVariables.set('queue', b.queue);",
+              "pm.collectionVariables.set('jobId', b.jobId);"
             ]
           }
         }
       ]
     },
     {
-      "name": "Enqueue \u2014 label job that will fail and retry",
+      "name": "Job \u2014 welcome email, bad address (expect 400)",
       "request": {
         "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/admin/jobs/welcome",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "jobs",
+            "welcome"
+          ]
+        },
+        "description": "The point of typed endpoints: a bad payload is refused here, not swallowed and failed later inside the worker where nobody sees it.",
         "header": [
           {
             "key": "Content-Type",
@@ -189,21 +214,8 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"jobName\": \"purchase-label\",\n  \"data\": { \"kind\": \"purchase-label\", \"sessionId\": \"cs_test_nonexistent_0123456789\" }\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/admin/queues/shipping/jobs",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "admin",
-            "queues",
-            "shipping",
-            "jobs"
-          ]
-        },
-        "description": "A session id Stripe has never issued, so the job throws and enters the retry backoff. This is the path that used to just log and drop the work. Check the 'delayed' state afterwards to see attemptsMade climbing and the real failure reason preserved."
+          "raw": "{\n  \"to\": \"not-an-email\"\n}"
+        }
       },
       "event": [
         {
@@ -211,18 +223,29 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('201', () => pm.response.to.have.status(201));",
-              "pm.collectionVariables.set('jobId', pm.response.json().jobId);",
-              "pm.collectionVariables.set('queue', 'shipping');"
+              "pm.test('400', () => pm.response.to.have.status(400));",
+              "pm.test('shaped like the rest of the API', () => pm.expect(pm.response.json().error.code).to.eql('invalid_request'));"
             ]
           }
         }
       ]
     },
     {
-      "name": "Enqueue \u2014 delayed job",
+      "name": "Job \u2014 payment confirmation",
       "request": {
         "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/admin/jobs/payment-confirmation",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "jobs",
+            "payment-confirmation"
+          ]
+        },
+        "description": "The email that used to be sent inline by the Stripe webhook, where a blocked SMTP port took the whole handler down for 120s.",
         "header": [
           {
             "key": "Content-Type",
@@ -231,21 +254,8 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"jobName\": \"welcome\",\n  \"data\": { \"kind\": \"welcome\", \"to\": \"later@example.invalid\" },\n  \"delayMs\": 30000\n}"
-        },
-        "url": {
-          "raw": "{{baseUrl}}/admin/queues/email/jobs",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "admin",
-            "queues",
-            "email",
-            "jobs"
-          ]
-        },
-        "description": "Sits in 'delayed' for 30s. Note: on Render's free tier the service hibernates, so a delayed job only fires once a request wakes the app."
+          "raw": "{\n  \"sessionId\": \"cs_test_nonexistent_0123456789\"\n}"
+        }
       },
       "event": [
         {
@@ -253,14 +263,214 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('201', () => pm.response.to.have.status(201));"
+              "pm.test('202', () => pm.response.to.have.status(202));",
+              "pm.expect(pm.response.json().queue).to.eql('email');"
             ]
           }
         }
       ]
     },
     {
-      "name": "List jobs \u2014 by state",
+      "name": "Job \u2014 shipping status",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/admin/jobs/shipping-status",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "jobs",
+            "shipping-status"
+          ]
+        },
+        "description": "status must be one the email templates actually have: in_transit | delivered | failed | returned. Anything else is refused rather than silently dropped by the worker.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sessionId\": \"cs_test_nonexistent_0123456789\",\n  \"to\": \"postman@example.invalid\",\n  \"status\": \"in_transit\",\n  \"trackingNumber\": \"1Z999AA10123456784\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('202', () => pm.response.to.have.status(202));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Job \u2014 shipping status, bad status (expect 400)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/admin/jobs/shipping-status",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "jobs",
+            "shipping-status"
+          ]
+        },
+        "description": "",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sessionId\": \"cs_test_nonexistent_0123456789\",\n  \"to\": \"postman@example.invalid\",\n  \"status\": \"exploded\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400', () => pm.response.to.have.status(400));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Job \u2014 purchase label (will fail and retry)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/admin/jobs/purchase-label",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "jobs",
+            "purchase-label"
+          ]
+        },
+        "description": "A session id Stripe never issued, so the job throws and enters backoff. This is the path that used to log the failure and drop the work. Follow it with the request below to watch attemptsMade climb.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sessionId\": \"cs_test_nonexistent_0123456789\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('202', () => pm.response.to.have.status(202));",
+              "const b = pm.response.json();",
+              "pm.collectionVariables.set('statusUrl', b.status);",
+              "pm.collectionVariables.set('queue', b.queue);",
+              "pm.collectionVariables.set('jobId', b.jobId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Job \u2014 delayed",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/admin/jobs/welcome",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "jobs",
+            "welcome"
+          ]
+        },
+        "description": "Sits in 'delayed'. On Render's free tier the service hibernates, so a delayed job only fires once a request wakes the app.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"to\": \"later@example.invalid\",\n  \"delayMs\": 30000\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('202', () => pm.response.to.have.status(202));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Follow a job until it settles",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/admin/jobs/{{queue}}/{{jobId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "jobs",
+            "{{queue}}",
+            "{{jobId}}"
+          ]
+        },
+        "description": "Polls the job the previous request queued. Retries a few times so a run can assert the outcome instead of eyeballing the dashboard."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "console.log(j.job, '->', j.state, '| attempts:', j.attemptsMade, '|', j.failedReason || '');",
+              "pm.test('reports a real state', () => pm.expect(['waiting','active','delayed','completed','failed']).to.include(j.state));",
+              "const tries = (pm.collectionVariables.get('polls') || 0) * 1;",
+              "if (['waiting','active'].includes(j.state) && tries < 5) {",
+              "  pm.collectionVariables.set('polls', tries + 1);",
+              "  setTimeout(() => {}, 1500);",
+              "  pm.execution.setNextRequest('Follow a job until it settles');",
+              "} else { pm.collectionVariables.set('polls', 0); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List jobs by state",
       "request": {
         "method": "GET",
         "url": {
@@ -285,7 +495,8 @@
               "value": "20"
             }
           ]
-        }
+        },
+        "description": ""
       },
       "event": [
         {
@@ -318,7 +529,7 @@
             "retry"
           ]
         },
-        "description": "Only a finished job can be reprocessed. Retrying one that is waiting, delayed or mid-flight answers 409 with the state it is actually in \u2014 BullMQ throws on that, and a 500 would be the wrong way to report a normal race."
+        "description": "Only a finished job can be reprocessed. Retrying one that is waiting, delayed or mid-flight answers 409 naming the actual state \u2014 BullMQ throws on that, and a 500 would be the wrong way to report a normal race."
       },
       "event": [
         {
@@ -327,7 +538,7 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('never 500 \u2014 a bad state is reported, not crashed', () => pm.expect(pm.response.code).to.not.equal(500));",
-              "pm.test('200 retried, 409 wrong state, or 404 gone', () => pm.expect([200, 409, 404]).to.include(pm.response.code));",
+              "pm.test('200 retried, 409 wrong state, or 404 gone', () => pm.expect([200,409,404]).to.include(pm.response.code));",
               "if (pm.response.code === 409) console.log('not retryable:', pm.response.json().error.message);"
             ]
           }
@@ -351,7 +562,7 @@
             "{{jobId}}"
           ]
         },
-        "description": "Removes a job. A job the worker currently holds a lock on answers 409 rather than failing: it is a race, not an error."
+        "description": "A job the worker currently holds a lock on answers 409: that is a race, not an error."
       },
       "event": [
         {
@@ -360,7 +571,7 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('never 500', () => pm.expect(pm.response.code).to.not.equal(500));",
-              "pm.test('200 removed, 409 locked, or 404 gone', () => pm.expect([200, 409, 404]).to.include(pm.response.code));"
+              "pm.test('200 removed, 409 locked, or 404 gone', () => pm.expect([200,409,404]).to.include(pm.response.code));"
             ]
           }
         }
@@ -369,9 +580,6 @@
     {
       "name": "Perimeter \u2014 /api is closed to Postman (expected 403)",
       "request": {
-        "auth": {
-          "type": "noauth"
-        },
         "method": "GET",
         "url": {
           "raw": "{{baseUrl}}/api/kits",
@@ -383,7 +591,10 @@
             "kits"
           ]
         },
-        "description": "Not a bug. The shop API only answers its own page; this request has no Sec-Fetch-Site, so it is refused. Included so the collection documents the boundary rather than leaving you to rediscover it."
+        "description": "Not a bug. The storefront API only answers its own page, so this request \u2014 no Sec-Fetch-Site \u2014 is refused. Here so the collection documents the boundary rather than leaving you to rediscover it.",
+        "auth": {
+          "type": "noauth"
+        }
       },
       "event": [
         {
