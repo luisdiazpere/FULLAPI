@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { verifyWebhook, type WebhookEvent } from '@clerk/backend/webhooks';
 import { pool } from './db.ts';
-import { sendWelcomeEmail } from './email.ts';
+import { runOrQueue } from './jobs.ts';
 import { primaryEmail } from './clerkUser.ts';
 
 const fail = (code: string, message: string) => ({ error: { code, message } });
@@ -67,7 +67,7 @@ export default async function clerkWebhook(app: FastifyInstance) {
     if (event.type === 'user.created') {
       const email = primaryEmail(event.data);
       if (email) {
-        await sendWelcomeEmail(email);
+        await runOrQueue('email', { kind: 'welcome', to: email }, req.log);
       } else {
         req.log.warn({ userId: event.data.id }, 'clerk user.created had no email to welcome');
       }

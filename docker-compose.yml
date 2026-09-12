@@ -16,5 +16,17 @@ services:
       interval: 3s
       retries: 10
 
+  # BullMQ's backing store. Valkey, not Redis, to match what Render Key Value runs.
+  # noeviction is mandatory: any allkeys-* policy silently evicts live job data.
+  keyvalue:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      retries: 10
+
 volumes:
   pgdata:

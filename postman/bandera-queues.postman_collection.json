@@ -1,0 +1,401 @@
+{
+  "info": {
+    "name": "Bandera y Sello \u2014 Queues",
+    "description": "The BullMQ ops surface at /admin.\n\nWhy it is not under /api: that prefix is closed to everything but the shop's own page (Sec-Fetch-Site + Origin + CSRF, see src/perimeter.ts), so Postman gets a 403 there by design. The queue API is gated by a token instead \u2014 set `adminToken` in the collection variables.\n\nThe dashboard for humans is at {{baseUrl}}/admin/queues/ui/ (a browser will prompt for Basic auth: any username, the admin token as the password).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{adminToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "queue",
+      "value": "email",
+      "type": "string"
+    },
+    {
+      "key": "jobId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health \u2014 is the queue wired up?",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/admin/queues/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "queues",
+            "health"
+          ]
+        },
+        "description": "Answers even with no REDIS_URL, so it tells you whether the queue is configured at all rather than just failing."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200', () => pm.response.to.have.status(200));",
+              "const b = pm.response.json();",
+              "pm.test('reports queue names', () => pm.expect(b.queues).to.include.members(['email', 'shipping']));",
+              "if (!b.configured) console.warn('REDIS_URL is not set \u2014 jobs will run inline instead of being queued.');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth \u2014 no token is refused",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/admin/queues/stats",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "queues",
+            "stats"
+          ]
+        },
+        "description": "The whole /admin surface is token-gated. This must never return data."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('401', () => pm.response.to.have.status(401));",
+              "pm.test('prompts for credentials', () => pm.expect(pm.response.headers.get('www-authenticate')).to.match(/Basic/));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stats \u2014 counts per queue",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/admin/queues/stats",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "queues",
+            "stats"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200', () => pm.response.to.have.status(200));",
+              "const q = pm.response.json().queues;",
+              "pm.test('both queues reported', () => pm.expect(q).to.have.lengthOf(2));",
+              "q.forEach(x => console.log(x.queue, JSON.stringify(x.counts)));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Enqueue \u2014 welcome email",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jobName\": \"welcome\",\n  \"data\": { \"kind\": \"welcome\", \"to\": \"postman@example.invalid\" }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/admin/queues/email/jobs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "queues",
+            "email",
+            "jobs"
+          ]
+        },
+        "description": "Saves the returned jobId into the {{jobId}} variable for the requests below."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201', () => pm.response.to.have.status(201));",
+              "const b = pm.response.json();",
+              "pm.test('returns a job id', () => pm.expect(b.jobId).to.be.a('string'));",
+              "pm.collectionVariables.set('jobId', b.jobId);",
+              "pm.collectionVariables.set('queue', 'email');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Enqueue \u2014 label job that will fail and retry",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jobName\": \"purchase-label\",\n  \"data\": { \"kind\": \"purchase-label\", \"sessionId\": \"cs_test_nonexistent_0123456789\" }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/admin/queues/shipping/jobs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "queues",
+            "shipping",
+            "jobs"
+          ]
+        },
+        "description": "A session id Stripe has never issued, so the job throws and enters the retry backoff. This is the path that used to just log and drop the work. Check the 'delayed' state afterwards to see attemptsMade climbing and the real failure reason preserved."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('jobId', pm.response.json().jobId);",
+              "pm.collectionVariables.set('queue', 'shipping');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Enqueue \u2014 delayed job",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jobName\": \"welcome\",\n  \"data\": { \"kind\": \"welcome\", \"to\": \"later@example.invalid\" },\n  \"delayMs\": 30000\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/admin/queues/email/jobs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "queues",
+            "email",
+            "jobs"
+          ]
+        },
+        "description": "Sits in 'delayed' for 30s. Note: on Render's free tier the service hibernates, so a delayed job only fires once a request wakes the app."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201', () => pm.response.to.have.status(201));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List jobs \u2014 by state",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/admin/queues/{{queue}}/jobs?state=delayed&limit=20",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "queues",
+            "{{queue}}",
+            "jobs"
+          ],
+          "query": [
+            {
+              "key": "state",
+              "value": "delayed",
+              "description": "active | waiting | delayed | completed | failed"
+            },
+            {
+              "key": "limit",
+              "value": "20"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200', () => pm.response.to.have.status(200));",
+              "pm.response.json().jobs.forEach(j => console.log(j.id, j.name, 'attempts=' + j.attemptsMade, j.failedReason || ''));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Retry a job",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/admin/queues/{{queue}}/jobs/{{jobId}}/retry",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "queues",
+            "{{queue}}",
+            "jobs",
+            "{{jobId}}",
+            "retry"
+          ]
+        },
+        "description": "Only a finished job can be reprocessed. Retrying one that is waiting, delayed or mid-flight answers 409 with the state it is actually in \u2014 BullMQ throws on that, and a 500 would be the wrong way to report a normal race."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('never 500 \u2014 a bad state is reported, not crashed', () => pm.expect(pm.response.code).to.not.equal(500));",
+              "pm.test('200 retried, 409 wrong state, or 404 gone', () => pm.expect([200, 409, 404]).to.include(pm.response.code));",
+              "if (pm.response.code === 409) console.log('not retryable:', pm.response.json().error.message);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Remove a job",
+      "request": {
+        "method": "DELETE",
+        "url": {
+          "raw": "{{baseUrl}}/admin/queues/{{queue}}/jobs/{{jobId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "admin",
+            "queues",
+            "{{queue}}",
+            "jobs",
+            "{{jobId}}"
+          ]
+        },
+        "description": "Removes a job. A job the worker currently holds a lock on answers 409 rather than failing: it is a race, not an error."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('never 500', () => pm.expect(pm.response.code).to.not.equal(500));",
+              "pm.test('200 removed, 409 locked, or 404 gone', () => pm.expect([200, 409, 404]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Perimeter \u2014 /api is closed to Postman (expected 403)",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/kits",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "kits"
+          ]
+        },
+        "description": "Not a bug. The shop API only answers its own page; this request has no Sec-Fetch-Site, so it is refused. Included so the collection documents the boundary rather than leaving you to rediscover it."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 \u2014 the storefront API rejects non-browser callers', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

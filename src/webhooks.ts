@@ -1,20 +1,14 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type Stripe from 'stripe';
 import { stripe, loadSession } from './stripeClient.ts';
-import { pool, type Kit } from './db.ts';
-import { parcelFor, type Parcel } from './parcel.ts';
-import { purchaseLabel, type ShipToAddress } from './shipping.ts';
 import {
   alreadyProcessed,
   applyTrackingUpdate,
-  markPaymentEmailSent,
-  markShippingEmailSent,
   recordPayment,
-  recordShipment,
   releaseProcessed,
 } from './orders.ts';
 import { mapShippoStatus } from './shippingStatus.ts';
-import { sendPaymentConfirmation, sendShippingStatusEmail } from './email.ts';
+import { runOrQueue } from './jobs.ts';
 
 const fail = (code: string, message: string) => ({ error: { code, message } });
 
@@ -112,11 +106,11 @@ async function handleCheckoutCompleted(sessionId: string, log: FastifyBaseLogger
     shippingAddress: shippingDetails?.address ?? null,
   });
 
+  // Payment is recorded above, synchronously, so an order can never be lost to a
+  // queue. Everything after it is a retryable side effect and goes to a worker:
+  // this handler used to block for 120s on a dead SMTP port and hand Stripe a 500.
   if (!order.payment_email_sent_at && order.email) {
-    await sendPaymentConfirmation(order.email, {
-      sessionId, amountTotal: order.amount_total, currency: order.currency, items: loaded.items,
-    });
-    await markPaymentEmailSent(sessionId);
+    await runOrQueue('email', { kind: 'payment-confirmation', sessionId }, log);
   }
 
   if (!shippingDetails?.address?.country) {
@@ -124,46 +118,7 @@ async function handleCheckoutCompleted(sessionId: string, log: FastifyBaseLogger
     return;
   }
 
-  const lines = loaded.items
-    .filter((i): i is typeof i & { kitSku: string } => Boolean(i.kitSku))
-    .map((i) => ({ kitSku: i.kitSku, quantity: i.quantity ?? 1 }));
-  if (!lines.length) return;
-
-  const skus = [...new Set(lines.map((l) => l.kitSku))];
-  const { rows } = await pool.query<Kit>('SELECT * FROM kits WHERE sku = ANY($1)', [skus]);
-  const dims = new Map<string, Parcel>(rows.map((k) => [k.sku, {
-    weightGrams: k.weight_grams, lengthCm: k.length_cm, widthCm: k.width_cm, heightCm: k.height_cm,
-  }]));
-  if (lines.some((l) => !dims.has(l.kitSku))) {
-    log.error({ sessionId }, 'missing parcel dimensions for a purchased kit, cannot purchase a label');
-    return;
-  }
-
-  const address = shippingDetails.address;
-  const addressTo: ShipToAddress = {
-    name: shippingDetails.name ?? undefined,
-    street1: address.line1 ?? undefined,
-    city: address.city ?? undefined,
-    state: address.state ?? undefined,
-    zip: address.postal_code ?? undefined,
-    country: address.country ?? '',
-  };
-
-  try {
-    const label = await purchaseLabel(parcelFor(lines, dims), addressTo, sessionId);
-    await recordShipment(sessionId, {
-      shippoShipmentId: label.shipmentId,
-      shippoTransactionId: label.transactionId,
-      trackingNumber: label.trackingNumber,
-      trackingUrl: label.trackingUrl,
-      carrier: label.carrier,
-    });
-  } catch (err) {
-    // Payment already succeeded and was already emailed; a shipping failure here
-    // is a fulfillment problem to fix by hand, not something a Stripe webhook
-    // retry can solve, so it is logged rather than turned into a 5xx response.
-    log.error({ err, sessionId }, 'failed to purchase a shipping label');
-  }
+  await runOrQueue('shipping', { kind: 'purchase-label', sessionId }, log);
 }
 
 async function handleTrackingUpdate(sessionId: string, rawStatus: string, log: FastifyBaseLogger) {
@@ -177,11 +132,12 @@ async function handleTrackingUpdate(sessionId: string, rawStatus: string, log: F
   }
 
   if (result.shouldEmail && result.order.email) {
-    await sendShippingStatusEmail(
-      result.order.email,
-      { sessionId, trackingNumber: result.order.tracking_number },
-      mapped.status,
-    );
-    await markShippingEmailSent(sessionId, mapped.status);
+    await runOrQueue('email', {
+      kind: 'shipping-status',
+      sessionId,
+      to: result.order.email,
+      trackingNumber: result.order.tracking_number,
+      status: mapped.status,
+    }, log);
   }
 }

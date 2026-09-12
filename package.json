@@ -12,9 +12,13 @@
     "test:integration": "bash scripts/test-integration.sh"
   },
   "dependencies": {
+    "@bull-board/api": "^9.10.0",
+    "@bull-board/fastify": "^9.10.0",
     "@clerk/backend": "^3.17.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "bullmq": "^6.3.4",
     "fastify": "^5.2.1",
+    "ioredis": "^6.0.0",
     "nodemailer": "^10.0.2",
     "pg": "^8.13.1",
     "shippo": "^2.18.0",

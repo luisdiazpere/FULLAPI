@@ -29,6 +29,9 @@ import {
 } from './auth.ts';
 import perimeter, { csrfFor, internalHeaders } from './perimeter.ts';
 import { ShopError, type ShopCall } from './mcp/call.ts';
+import adminRoutes from './adminRoutes.ts';
+import { closeQueues, queueConfigured, startWorkers } from './queue.ts';
+import { handlers } from './jobs.ts';
 import { createSession, destroySession, getSession, type Session } from './sessions.ts';
 import {
   ClerkAuthError,
@@ -63,6 +66,10 @@ await app.register(clerkWebhook);
 // below. Order matters — the two webhook plugins above already have their own context,
 // so they stay exempt, which is what we want: Stripe and Clerk are not the frontend.
 await perimeter(app);
+
+// /admin is not under /api, so the perimeter above ignores it by design: it is gated
+// by ADMIN_TOKEN instead, which is what lets Postman drive it.
+await app.register(adminRoutes);
 
 const MAX_LINES = 20;
 const NAME_MAX = 250;
@@ -898,6 +905,19 @@ await runMigrations();
 // Only listen when run as the entrypoint. Importing this module used to bind a port,
 // which is why no route could be covered by a test.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  // The worker shares this process: Render has no background-worker service on the
+  // free tier. See the note in src/queue.ts about hibernation.
+  startWorkers(handlers, app.log);
+  if (queueConfigured()) app.log.info({ }, 'queue workers started');
+
+  // Let in-flight jobs finish instead of stranding them as stalled on a deploy.
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(signal, () => {
+      app.log.info({ signal }, 'shutting down');
+      Promise.allSettled([closeQueues(), app.close()]).then(() => process.exit(0));
+    });
+  }
+
   app.listen({ port: env.PORT, host: '0.0.0.0' }).catch((err) => {
     app.log.error(err);
     process.exit(1);
